@@ -38,7 +38,7 @@ export function ReturnPhotoGallery({
       window.setTimeout(() => {
         const link = document.createElement('a');
         link.href = `/api/photos/${photo.id}?download=1`;
-        link.download = photo.file_name;
+        link.download = '';
         document.body.appendChild(link);
         link.click();
         link.remove();
@@ -73,7 +73,7 @@ export function ReturnPhotoGallery({
       </button>
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <a href={`/api/photos/${activePhoto.id}?download=1`} download={activePhoto.file_name} className={cn(buttonVariants({ variant: 'outline', size: 'lg' }), 'h-10 rounded-xl')}>
+        <a href={`/api/photos/${activePhoto.id}?download=1`} download className={cn(buttonVariants({ variant: 'outline', size: 'lg' }), 'h-10 rounded-xl')}>
           <Download /> Baixar foto {safeSelected + 1}
         </a>
         {photos.length > 1 && <ButtonDownloadAll onClick={downloadAll} count={photos.length} />}

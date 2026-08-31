@@ -24,8 +24,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { ReturnWorkspace } from '@/components/return-workspace';
 import type { ConfigOptionsResponse, ReturnSummary, StatusDefinition } from '@/lib/returns';
 import { statusClass, statusDotStyle, statusStyle } from '@/lib/status-colors';
 
@@ -39,6 +41,7 @@ export function Dashboard() {
   const [storeFilter, setStoreFilter] = useState('');
   const [configuredStores, setConfiguredStores] = useState<string[]>([]);
   const [includeFinalized, setIncludeFinalized] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const loadReturns = useCallback(async (query = search, includeClosed = includeFinalized) => {
     setLoading(true);
@@ -105,7 +108,7 @@ export function Dashboard() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" size="lg" className="hidden h-11 rounded-xl px-4 sm:inline-flex" disabled={!firstPending} onClick={() => firstPending && (window.location.href = `/devolucoes/${firstPending.id}`)}><ClipboardCheck /> Completar cadastro</Button>
+            <Button variant="outline" size="lg" className="hidden h-11 rounded-xl px-4 sm:inline-flex" disabled={!firstPending} onClick={() => firstPending && setDetailId(firstPending.id)}><ClipboardCheck /> Completar cadastro</Button>
             <Button size="lg" className="h-11 rounded-xl px-4 shadow-[0_8px_20px_rgb(13_96_83/18%)]" onClick={() => { window.location.href = '/receber'; }}><Camera /><span className="hidden sm:inline">Registrar recebimento</span><span className="sm:hidden">Registrar</span></Button>
           </div>
         </div>
@@ -162,7 +165,7 @@ export function Dashboard() {
                 <EmptyState hasFilters={Boolean(search || statusFilter || storeFilter)} onCreate={() => { window.location.href = '/receber'; }} onClear={() => { setSearch(''); setStatusFilter(''); setStoreFilter(''); }} />
               ) : (
                 <div className="grid gap-3 xl:grid-cols-3">
-                  {visibleItems.map((item) => <ReturnCard key={item.id} item={item} onOpen={() => { window.location.href = `/devolucoes/${item.id}`; }} />)}
+                  {visibleItems.map((item) => <ReturnCard key={item.id} item={item} onOpen={() => setDetailId(item.id)} />)}
                 </div>
               )}
             </section>
@@ -176,6 +179,21 @@ export function Dashboard() {
         <MobileNav icon={<Search />} label="Buscar" onClick={() => document.querySelector<HTMLInputElement>('input[aria-label="Buscar devolução"]')?.focus()} />
         <MobileNav icon={<Settings />} label="Mais" onClick={() => { window.location.href = '/configuracoes'; }} />
       </nav>
+
+      <Dialog open={Boolean(detailId)} onOpenChange={(open) => {
+        if (!open) {
+          setDetailId(null);
+          void loadReturns(search, includeFinalized);
+        }
+      }}>
+        <DialogContent showCloseButton={false} className="h-dvh w-screen max-w-none gap-0 overflow-hidden rounded-none p-0 sm:h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:rounded-3xl">
+          <DialogTitle className="sr-only">Gerenciar devolução</DialogTitle>
+          {detailId && <ReturnWorkspace returnId={detailId} embedded onClose={() => {
+            setDetailId(null);
+            void loadReturns(search, includeFinalized);
+          }} />}
+        </DialogContent>
+      </Dialog>
 
     </div>
   );

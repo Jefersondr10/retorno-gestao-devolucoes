@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   AlertCircle,
@@ -47,6 +46,7 @@ import {
   type StatusDefinition,
 } from '@/lib/returns';
 import { statusClass, statusDotStyle, statusStyle } from '@/lib/status-colors';
+import { cn } from '@/lib/utils';
 
 type UpdateInput = z.input<typeof updateReturnSchema>;
 type UpdateOutput = z.output<typeof updateReturnSchema>;
@@ -84,7 +84,7 @@ function mapDetail(item: ReturnDetail): UpdateInput {
   };
 }
 
-export function ReturnWorkspace({ returnId }: { returnId: string }) {
+export function ReturnWorkspace({ returnId, embedded = false, onClose }: { returnId: string; embedded?: boolean; onClose?: () => void }) {
   const [detail, setDetail] = useState<ReturnDetail | null>(null);
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [options, setOptions] = useState<ConfigOptionsResponse>({ locations: [], stores: [], conditions: [] });
@@ -206,19 +206,26 @@ export function ReturnWorkspace({ returnId }: { returnId: string }) {
     }
   }
 
-  if (loading) return <div className="grid min-h-screen place-items-center bg-background text-muted-foreground"><div className="text-center"><Loader2 className="mx-auto size-7 animate-spin text-primary" /><p className="mt-3 text-sm">Abrindo devolução...</p></div></div>;
-  if (!detail) return <div className="grid min-h-screen place-items-center bg-background p-4"><Alert variant="destructive" className="max-w-lg"><AlertCircle /><AlertTitle>Não foi possível abrir</AlertTitle><AlertDescription>{serverError || 'Tente novamente.'}</AlertDescription></Alert></div>;
+  if (loading) return <div className={cn('grid place-items-center bg-background text-muted-foreground', embedded ? 'h-full min-h-80' : 'min-h-screen')}><div className="text-center"><Loader2 className="mx-auto size-7 animate-spin text-primary" /><p className="mt-3 text-sm">Abrindo devolução...</p></div></div>;
+  if (!detail) return <div className={cn('grid place-items-center bg-background p-4', embedded ? 'h-full min-h-80' : 'min-h-screen')}><Alert variant="destructive" className="max-w-lg"><AlertCircle /><AlertTitle>Não foi possível abrir</AlertTitle><AlertDescription>{serverError || 'Tente novamente.'}</AlertDescription></Alert></div>;
 
   const finalized = detail.status === 'FINALIZED';
   const selectedStatus = statuses.find((status) => status.code === values.status) || statuses.find((status) => status.code === detail.status);
   const locationOptions = mergeCurrentOption(options.locations, detail.received_location);
   const storeOptions = mergeCurrentOption(options.stores, detail.store);
+  const goBack = () => {
+    if (onClose) {
+      onClose();
+      return;
+    }
+    window.location.assign('/');
+  };
 
   return (
-    <form className="min-h-screen bg-background text-foreground" onSubmit={form.handleSubmit(save)}>
-      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur-xl">
+    <form className={cn('bg-background text-foreground', embedded ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'min-h-screen')} onSubmit={form.handleSubmit(save)}>
+      <header className={cn('z-40 shrink-0 border-b bg-background/95 backdrop-blur-xl', !embedded && 'sticky top-0')}>
         <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-3 px-4 py-2 sm:px-6">
-          <Link href="/" className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às devoluções"><ArrowLeft className="size-5" /></Link>
+          <button type="button" onClick={goBack} className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label={embedded ? 'Fechar devolução e voltar à lista' : 'Voltar às devoluções'}><ArrowLeft className="size-5" /></button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2"><h1 className="text-lg font-extrabold tracking-tight">{detail.protocol}</h1><Badge variant="outline" className={statusClass(selectedStatus?.color || detail.status_color)} style={statusStyle(selectedStatus?.color || detail.status_color)}><span className="size-2 rounded-full" style={statusDotStyle(selectedStatus?.color || detail.status_color)} />{selectedStatus?.label || detail.status_label}</Badge>{detail.source === 'PHOTO' && <Badge variant="secondary"><Camera /> Aberta por foto</Badge>}</div>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail.store || 'Loja pendente'} · recebida em {formatDate(detail.received_at)}</p>
@@ -234,8 +241,8 @@ export function ReturnWorkspace({ returnId }: { returnId: string }) {
         </nav>
       </header>
 
-      <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)] lg:items-start lg:py-8">
-        <aside className="min-w-0 lg:sticky lg:top-32">
+      <main className={cn('mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)] lg:items-start lg:py-8', embedded && 'min-h-0 flex-1 overflow-y-auto')}>
+        <aside className={cn('min-w-0 lg:sticky', embedded ? 'lg:top-3' : 'lg:top-32')}>
           {detail.photos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80"><ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} /></Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto recebida</p></div></Card>}
         </aside>
 

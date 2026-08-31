@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import {
   AlertCircle,
   ArrowLeft,
@@ -24,12 +23,15 @@ import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import type { ConfigOption, ConfigOptionsResponse, StatusDefinition } from '@/lib/returns';
 import { statusClass, statusDotStyle, statusStyle } from '@/lib/status-colors';
 
 const emptyOptions: ConfigOptionsResponse = { locations: [], stores: [], conditions: [] };
+type SettingsSection = 'status' | 'locais' | 'lojas' | 'condicoes' | 'regras' | 'fotos';
 
 export function SettingsPage() {
+  const [activeSection, setActiveSection] = useState<SettingsSection>('status');
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [options, setOptions] = useState<ConfigOptionsResponse>(emptyOptions);
   const [loading, setLoading] = useState(true);
@@ -138,33 +140,46 @@ export function SettingsPage() {
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 sm:px-6">
-          <Link href="/" className="grid size-11 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às devoluções"><ArrowLeft className="size-5" /></Link>
+          <button type="button" onClick={() => window.location.assign('/')} className="grid size-11 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às devoluções"><ArrowLeft className="size-5" /></button>
           <div className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground"><PackageCheck className="size-5" /></div>
           <div><p className="text-base font-bold">Configurações</p><p className="text-xs text-muted-foreground">Cadastros e regras do sistema</p></div>
           <Button className="ml-auto hidden h-10 rounded-xl sm:inline-flex" onClick={() => { window.location.href = '/receber'; }}><Plus /> Nova devolução</Button>
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-7 sm:px-6 lg:grid-cols-[230px_minmax(0,1fr)] lg:py-10">
-        <aside>
-          <nav aria-label="Seções de configurações" className="sticky top-24 grid gap-1 rounded-2xl border bg-card p-2 shadow-sm">
-            <SettingsLink href="#status" icon={<Tags />} label="Status e cores" />
-            <SettingsLink href="#locais" icon={<MapPin />} label="Locais" />
-            <SettingsLink href="#lojas" icon={<Store />} label="Lojas" />
-            <SettingsLink href="#condicoes" icon={<CheckCircle2 />} label="Condições" />
-            <SettingsLink href="#regras" icon={<FileCheck2 />} label="Finalização" />
-            <SettingsLink href="#fotos" icon={<Image />} label="Fotos" />
+      <div className="mx-auto grid max-w-7xl gap-5 px-4 py-6 sm:px-6 lg:grid-cols-[270px_minmax(0,1fr)] lg:gap-8 lg:py-10">
+        <div className="lg:hidden">
+          <Label htmlFor="settings-section" className="mb-2 block">Área de configuração</Label>
+          <NativeSelect id="settings-section" className="w-full bg-card" value={activeSection} onChange={(event) => setActiveSection(event.target.value as SettingsSection)}>
+            <NativeSelectOption value="status">Status e cores</NativeSelectOption>
+            <NativeSelectOption value="locais">Locais de recebimento</NativeSelectOption>
+            <NativeSelectOption value="lojas">Lojas de origem</NativeSelectOption>
+            <NativeSelectOption value="condicoes">Condições do produto</NativeSelectOption>
+            <NativeSelectOption value="regras">Regras de finalização</NativeSelectOption>
+            <NativeSelectOption value="fotos">Fotos e envio</NativeSelectOption>
+          </NativeSelect>
+        </div>
+
+        <aside className="hidden lg:block">
+          <nav aria-label="Seções de configurações" className="sticky top-24 grid gap-2 rounded-3xl border bg-card p-3 shadow-[0_12px_38px_rgb(28_39_36/6%)]">
+            <div className="px-3 pb-2 pt-1"><p className="text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">Configurar</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Escolha uma área para editar.</p></div>
+            <SettingsNavButton active={activeSection === 'status'} onClick={() => setActiveSection('status')} icon={<Tags />} label="Status e cores" description="Etapas e identificação" />
+            <SettingsNavButton active={activeSection === 'locais'} onClick={() => setActiveSection('locais')} icon={<MapPin />} label="Locais" description="Onde os pacotes chegam" />
+            <SettingsNavButton active={activeSection === 'lojas'} onClick={() => setActiveSection('lojas')} icon={<Store />} label="Lojas" description="Origem das devoluções" />
+            <SettingsNavButton active={activeSection === 'condicoes'} onClick={() => setActiveSection('condicoes')} icon={<CheckCircle2 />} label="Condições" description="Estado dos produtos" />
+            <SettingsNavButton active={activeSection === 'regras'} onClick={() => setActiveSection('regras')} icon={<FileCheck2 />} label="Finalização" description="Requisitos obrigatórios" />
+            <SettingsNavButton active={activeSection === 'fotos'} onClick={() => setActiveSection('fotos')} icon={<Image />} label="Fotos" description="Limites de captura" />
           </nav>
         </aside>
 
         <main className="min-w-0 space-y-6">
-          <div><p className="text-sm font-semibold text-primary">Administração</p><h1 className="mt-1 text-2xl font-extrabold tracking-[-0.035em] sm:text-3xl">Cadastros do sistema</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Cadastre uma vez e apenas selecione durante o recebimento e a triagem.</p></div>
+          <div><p className="text-sm font-semibold text-primary">Administração</p><h1 className="mt-1 text-2xl font-extrabold tracking-[-0.035em] sm:text-3xl">Cadastros do sistema</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Cada área fica em seu próprio painel. Cadastre uma vez e apenas selecione durante o recebimento e a triagem.</p></div>
 
           {loading && <Card className="grid min-h-40 place-items-center border-0 bg-card ring-border/80"><Loader2 className="size-6 animate-spin text-primary" /></Card>}
 
           {!loading && (
-            <>
-              <SettingsCard id="status" icon={<Settings2 />} title="Status e paleta de cores" description="Escolha qualquer cor e veja a mesma identificação no filtro e na devolução.">
+            <div key={activeSection}>
+              {activeSection === 'status' && <SettingsCard id="status" icon={<Settings2 />} title="Status e paleta de cores" description="Escolha qualquer cor e veja a mesma identificação no filtro e na devolução.">
                 <div className="flex flex-wrap gap-2 rounded-2xl border bg-muted/25 p-4">
                   {statuses.map((status) => <Badge key={status.code} variant="outline" className={statusClass(status.color)} style={statusStyle(status.color)}><span className="size-2 rounded-full" style={statusDotStyle(status.color)} />{status.label}</Badge>)}
                 </div>
@@ -173,19 +188,19 @@ export function SettingsPage() {
                   <ColorField id="status-color" label="Cor do status" value={statusColor} onChange={setStatusColor} />
                   <SaveButton saving={saving === 'STATUS'} disabled={!statusLabel.trim()} label="Cadastrar status" />
                 </form>
-              </SettingsCard>
+              </SettingsCard>}
 
-              <SettingsCard id="locais" icon={<MapPin />} title="Locais de recebimento" description="Unidades físicas onde as devoluções são recebidas.">
+              {activeSection === 'locais' && <SettingsCard id="locais" icon={<MapPin />} title="Locais de recebimento" description="Unidades físicas onde as devoluções são recebidas.">
                 <OptionChips items={options.locations} />
                 <SimpleOptionForm id="location-name" label="Novo local" placeholder="Ex.: Escritório de Curitiba" value={locationLabel} onChange={setLocationLabel} saving={saving === 'LOCATION'} onSubmit={() => createOption('LOCATION')} />
-              </SettingsCard>
+              </SettingsCard>}
 
-              <SettingsCard id="lojas" icon={<Store />} title="Lojas de origem" description="Lojas, marketplaces ou canais de onde partem as devoluções.">
+              {activeSection === 'lojas' && <SettingsCard id="lojas" icon={<Store />} title="Lojas de origem" description="Lojas, marketplaces ou canais de onde partem as devoluções.">
                 <OptionChips items={options.stores} empty="Nenhuma loja cadastrada. Cadastre a primeira abaixo." />
                 <SimpleOptionForm id="store-name" label="Nova loja" placeholder="Ex.: Loja Centro" value={storeLabel} onChange={setStoreLabel} saving={saving === 'STORE'} onSubmit={() => createOption('STORE')} />
-              </SettingsCard>
+              </SettingsCard>}
 
-              <SettingsCard id="condicoes" icon={<CheckCircle2 />} title="Condições do produto" description="Classificações usadas em cada item devolvido.">
+              {activeSection === 'condicoes' && <SettingsCard id="condicoes" icon={<CheckCircle2 />} title="Condições do produto" description="Classificações usadas em cada item devolvido.">
                 <div className="grid gap-2 sm:grid-cols-2">
                   {options.conditions.map((condition) => (
                     <div key={condition.code} className="flex items-center gap-3 rounded-xl border bg-muted/20 p-3">
@@ -203,18 +218,18 @@ export function SettingsPage() {
                   <CheckRow checked={conditionRequiresNotes} onChange={setConditionRequiresNotes} label="Exigir descrição da condição" />
                 </div>
                 <Button className="mt-4 h-11 rounded-xl" disabled={saving === 'CONDITION' || !conditionLabel.trim()} onClick={() => createOption('CONDITION')}>{saving === 'CONDITION' ? <Loader2 className="animate-spin" /> : <Plus />} Cadastrar condição</Button>
-              </SettingsCard>
+              </SettingsCard>}
 
-              <SettingsCard id="regras" icon={<FileCheck2 />} title="Finalização segura" description="Regras obrigatórias verificadas automaticamente.">
+              {activeSection === 'regras' && <SettingsCard id="regras" icon={<FileCheck2 />} title="Finalização segura" description="Regras obrigatórias verificadas automaticamente.">
                 <ul className="grid gap-3 sm:grid-cols-2">
                   {['Local, loja e identificação preenchidos', 'Todos os produtos com condição definida', 'Destino de cada produto definido', 'Nota apenas quando a condição exigir', 'Teste concluído quando necessário'].map((rule) => <li key={rule} className="flex items-start gap-2.5 rounded-xl border bg-muted/20 p-3 text-sm"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />{rule}</li>)}
                 </ul>
-              </SettingsCard>
+              </SettingsCard>}
 
-              <SettingsCard id="fotos" icon={<Image />} title="Fotos e envio" description="Limites atuais do recebimento pelo celular.">
+              {activeSection === 'fotos' && <SettingsCard id="fotos" icon={<Image />} title="Fotos e envio" description="Limites atuais do recebimento pelo celular.">
                 <dl className="grid gap-3 sm:grid-cols-3"><Info label="Por devolução" value="Até 8 fotos" /><Info label="Por arquivo" value="Até 10 MB" /><Info label="Acesso" value="Somente autenticado" /></dl>
-              </SettingsCard>
-            </>
+              </SettingsCard>}
+            </div>
           )}
 
           {error && <Alert variant="destructive"><AlertCircle /><AlertTitle>Não foi possível concluir</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
@@ -226,8 +241,8 @@ export function SettingsPage() {
   );
 }
 
-function SettingsLink({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
-  return <a href={href} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground [&>svg]:size-[18px]">{icon}{label}</a>;
+function SettingsNavButton({ active, onClick, icon, label, description }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; description: string }) {
+  return <button type="button" onClick={onClick} aria-current={active ? 'page' : undefined} className={`flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-left outline-none transition focus-visible:ring-3 focus-visible:ring-ring/50 ${active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}><span className={`grid size-9 shrink-0 place-items-center rounded-xl [&>svg]:size-[18px] ${active ? 'bg-white/15' : 'bg-muted'}`}>{icon}</span><span className="min-w-0"><span className="block text-sm font-bold">{label}</span><span className={`mt-0.5 block truncate text-[11px] ${active ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}>{description}</span></span></button>;
 }
 
 function SettingsCard({ id, icon, title, description, children }: { id: string; icon: React.ReactNode; title: string; description: string; children: React.ReactNode }) {
