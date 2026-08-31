@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ReturnPhotoGallery } from '@/components/return-photo-gallery';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
@@ -211,7 +212,7 @@ export function ReturnDetailSheet({ open, returnId, statuses, onOpenChange, onCh
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full gap-0 sm:max-w-[960px]" aria-describedby="return-detail-description">
+      <SheetContent className="w-full gap-0 sm:max-w-[1180px]" aria-describedby="return-detail-description">
         {loading ? (
           <div className="grid h-full place-items-center text-muted-foreground">
             <div className="text-center"><Loader2 className="mx-auto size-6 animate-spin" /><p className="mt-2 text-sm">Abrindo devolução...</p></div>
@@ -230,22 +231,8 @@ export function ReturnDetailSheet({ open, returnId, statuses, onOpenChange, onCh
             </SheetHeader>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
+              <ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} />
               <fieldset disabled={finalized} className="space-y-7 px-5 py-6 sm:px-6">
-                {detail.photos.length > 0 && (
-                  <section>
-                    <SectionTitle icon={<Camera />} title={`Fotos recebidas (${detail.photos.length})`} />
-                    <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
-                      {detail.photos.map((photo, index) => (
-                        <a key={photo.id} href={`/api/photos/${photo.id}`} target="_blank" rel="noreferrer" className="group relative aspect-square overflow-hidden rounded-xl border bg-muted">
-                          {/* Private photos are streamed by an authenticated application route. */}
-                          {/* eslint-disable-next-line next/no-img-element */}
-                          <img src={`/api/photos/${photo.id}`} alt={`Foto ${index + 1} da devolução ${detail.protocol}`} className="h-full w-full object-cover transition group-hover:scale-105" />
-                        </a>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
                 <section>
                   <SectionTitle icon={<Box />} title="Dados da devolução" />
                   <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
