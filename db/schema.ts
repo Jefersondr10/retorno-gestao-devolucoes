@@ -106,6 +106,27 @@ export const returnPhotos = sqliteTable(
   (table) => [index('idx_return_photos_return_id').on(table.returnId)],
 );
 
+export const returnVideos = sqliteTable(
+  'return_videos',
+  {
+    id: text('id').primaryKey(),
+    returnId: text('return_id')
+      .notNull()
+      .references(() => returns.id, { onDelete: 'cascade' }),
+    objectKey: text('object_key').notNull(),
+    fileName: text('file_name').notNull(),
+    contentType: text('content_type').notNull(),
+    size: integer('size').notNull(),
+    durationMs: integer('duration_ms'),
+    createdBy: text('created_by').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_return_videos_return_id').on(table.returnId),
+    uniqueIndex('idx_return_videos_object_key').on(table.objectKey),
+  ],
+);
+
 export const auditEvents = sqliteTable(
   'audit_events',
   {

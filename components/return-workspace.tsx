@@ -33,7 +33,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -138,7 +137,7 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
         if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível abrir a devolução.');
         return result.item;
       }),
-      fetch('/api/config/statuses').then(async (response) => {
+      fetch('/api/config/statuses?includeInactive=true').then(async (response) => {
         const result = (await response.json()) as { items?: StatusDefinition[]; error?: string };
         if (!response.ok) throw new Error(result.error || 'Não foi possível carregar os status.');
         return result.items || [];
@@ -206,6 +205,17 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
     }
   }
 
+  async function refreshAfterVideoDeletion(count: number, storagePending: boolean) {
+    const response = await fetch(`/api/returns/${returnId}`);
+    const result = (await response.json()) as { item?: ReturnDetail; error?: string };
+    if (!response.ok || !result.item) throw new Error(result.error || 'Os vídeos foram excluídos, mas não foi possível atualizar a tela.');
+    setDetail(result.item);
+    form.reset(mapDetail(result.item));
+    setNotice(storagePending
+      ? 'Vídeo removido da devolução. A liberação do espaço continuará automaticamente.'
+      : count === 1 ? 'Vídeo excluído. Fotos e dados foram mantidos.' : `${count} vídeos excluídos. Fotos e dados foram mantidos.`);
+  }
+
   if (loading) return <div className={cn('grid place-items-center bg-background text-muted-foreground', embedded ? 'h-full min-h-80' : 'min-h-screen')}><div className="text-center"><Loader2 className="mx-auto size-7 animate-spin text-primary" /><p className="mt-3 text-sm">Abrindo devolução...</p></div></div>;
   if (!detail) return <div className={cn('grid place-items-center bg-background p-4', embedded ? 'h-full min-h-80' : 'min-h-screen')}><Alert variant="destructive" className="max-w-lg"><AlertCircle /><AlertTitle>Não foi possível abrir</AlertTitle><AlertDescription>{serverError || 'Tente novamente.'}</AlertDescription></Alert></div>;
 
@@ -227,7 +237,7 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
         <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-3 px-4 py-2 sm:px-6">
           <button type="button" onClick={goBack} className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label={embedded ? 'Fechar devolução e voltar à lista' : 'Voltar às devoluções'}><ArrowLeft className="size-5" /></button>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2"><h1 className="text-lg font-semibold tracking-tight tabular-nums">{detail.protocol}</h1><Badge variant="outline" className={statusClass(selectedStatus?.color || detail.status_color)} style={statusStyle(selectedStatus?.color || detail.status_color)}><span className="size-2 rounded-full" style={statusDotStyle(selectedStatus?.color || detail.status_color)} />{selectedStatus?.label || detail.status_label}</Badge>{detail.source === 'PHOTO' && <Badge variant="secondary"><Camera /> Aberta por foto</Badge>}</div>
+            <div className="flex flex-wrap items-center gap-2"><h1 className="text-lg font-semibold tracking-tight tabular-nums">{detail.protocol}</h1><Badge variant="outline" className={statusClass(selectedStatus?.color || detail.status_color)} style={statusStyle(selectedStatus?.color || detail.status_color)}><span className="size-2 rounded-full" style={statusDotStyle(selectedStatus?.color || detail.status_color)} />{selectedStatus?.label || detail.status_label}</Badge>{detail.source === 'PHOTO' && <Badge variant="secondary"><Camera /> {detail.video_count > 0 && detail.photo_count === 0 ? 'Aberta por vídeo' : detail.video_count > 0 ? 'Aberta por mídia' : 'Aberta por foto'}</Badge>}</div>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail.store || 'Loja pendente'} · recebida em {formatDate(detail.received_at)}</p>
           </div>
           {!finalized && <div className="hidden items-center gap-2 md:flex"><span className="mr-2 text-xs text-muted-foreground">{form.formState.isDirty ? 'Alterações não salvas' : 'Tudo salvo'}</span><Button type="submit" variant="outline" className="h-10" disabled={form.formState.isSubmitting || finalizing}>{form.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <Save />} Salvar</Button><Button type="button" className="h-10" disabled={blockingReasons.length > 0 || form.formState.isDirty || finalizing} onClick={finalize}>{finalizing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Finalizar</Button></div>}
@@ -243,7 +253,7 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
 
       <main className={cn('mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)] lg:items-start lg:py-8', embedded && 'min-h-0 flex-1 overflow-y-auto')}>
         <aside className={cn('min-w-0 lg:sticky', embedded ? 'lg:top-3' : 'lg:top-32')}>
-          {detail.photos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80"><ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} /></Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto recebida</p></div></Card>}
+          {detail.photos.length || detail.videos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80"><ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} videos={detail.videos} returnId={detail.id} finalized={finalized} onVideosDeleted={refreshAfterVideoDeletion} /></Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto ou vídeo recebido</p></div></Card>}
         </aside>
 
         <div className="min-w-0 space-y-5">
@@ -303,8 +313,8 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
 
             <SectionCard id="finalizacao" step="4" icon={<FileCheck2 />} title="Entrada e finalização" description="Defina o status e conclua somente quando as regras estiverem atendidas.">
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Status operacional">
-                  <StatusSelect value={values.status || ''} statuses={statuses.filter((status) => status.code !== 'FINALIZED')} onChange={(status) => form.setValue('status', status, { shouldDirty: true, shouldValidate: true })} />
+                <Field label="Status operacional" htmlFor="return-status">
+                  <StatusSelect value={values.status || ''} statuses={statuses.filter((status) => (status.code !== 'FINALIZED' || finalized) && (Boolean(status.active) || status.code === detail.status))} onChange={(status) => form.setValue('status', status, { shouldDirty: true, shouldValidate: true })} />
                 </Field>
                 <Field label={allItemsInvoiceExempt ? 'Nota de entrada' : 'Número da nota de entrada'} hint={allItemsInvoiceExempt ? 'Dispensada pelas condições' : 'Obrigatória para finalizar'}><Input className="h-11" placeholder={allItemsInvoiceExempt ? 'Não necessária' : 'Informe o número'} {...form.register('invoiceNumber')} /></Field>
                 <Field label="Data da entrada"><Input className="h-11" type="date" {...form.register('invoiceDate')} /></Field>
@@ -337,9 +347,10 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
 }
 
 function StatusSelect({ value, statuses, onChange }: { value: string; statuses: StatusDefinition[]; onChange: (value: string) => void }) {
+  const selected = statuses.find((status) => status.code === value);
   return (
     <Select value={value} onValueChange={(next) => next && onChange(next)}>
-      <SelectTrigger className="h-11 w-full rounded-xl"><SelectValue placeholder="Selecione o status" /></SelectTrigger>
+      <SelectTrigger id="return-status" className="h-11 w-full rounded-xl"><span className="flex min-w-0 flex-1 items-center gap-2 text-left">{selected ? <><span className="size-2.5 shrink-0 rounded-full" style={statusDotStyle(selected.color)} /><span className="truncate">{selected.label}</span></> : <span className="text-muted-foreground">Status não configurado</span>}</span></SelectTrigger>
       <SelectContent>
         {statuses.map((status) => <SelectItem key={status.code} value={status.code}><span className="size-2.5 rounded-full" style={statusDotStyle(status.color)} />{status.label}</SelectItem>)}
       </SelectContent>
@@ -351,8 +362,8 @@ function SectionCard({ id, step, icon, title, description, children }: { id: str
   return <Card id={id} className="scroll-mt-32 border-0 bg-card p-5 shadow-[0_12px_38px_rgb(28_39_36/7%)] ring-border/80 sm:p-6"><div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary [&>svg]:size-5">{step || icon}</span><div>{step && <span className="sr-only">{icon}</span>}<h2 className="font-bold">{title}</h2><p className="mt-1 text-sm text-muted-foreground">{description}</p></div></div><div className="mt-5">{children}</div></Card>;
 }
 
-function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: React.ReactNode }) {
-  return <div className="space-y-2"><div className="flex items-center justify-between gap-2"><Label>{label}</Label>{hint && <span className="text-[11px] font-medium text-muted-foreground">{hint}</span>}</div>{children}{error && <p className="text-xs text-destructive">{error}</p>}</div>;
+function Field({ label, htmlFor, hint, error, children }: { label: string; htmlFor?: string; hint?: string; error?: string; children: React.ReactNode }) {
+  return <div className="space-y-2"><div className="flex items-center justify-between gap-2"><Label htmlFor={htmlFor}>{label}</Label>{hint && <span className="text-[11px] font-medium text-muted-foreground">{hint}</span>}</div>{children}{error && <p className="text-xs text-destructive">{error}</p>}</div>;
 }
 
 function Anchor({ href, label }: { href: string; label: string }) {
@@ -372,6 +383,6 @@ function formatDate(value: string | null) {
 }
 
 function historyLabel(action: string) {
-  const labels: Record<string, string> = { CREATED: 'Devolução registrada', UPDATED: 'Informações atualizadas', FINALIZED: 'Devolução finalizada' };
+  const labels: Record<string, string> = { CREATED: 'Devolução registrada', UPDATED: 'Informações atualizadas', FINALIZED: 'Devolução finalizada', VIDEOS_DELETION_PENDING: 'Vídeos removidos; limpeza do espaço pendente', VIDEOS_DELETED: 'Vídeos excluídos para liberar espaço' };
   return labels[action] || action;
 }

@@ -1,8 +1,30 @@
 import { actorFrom, apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
 import { createReturnSchema } from '@/lib/returns';
 import { runRetentionCleanup } from '@/lib/retention';
+import { readVideoDurationMs } from '@/lib/video-metadata';
 
 export const dynamic = 'force-dynamic';
+
+const MAX_VIDEO_BYTES = 40 * 1024 * 1024;
+const MAX_VIDEO_DURATION_MS = 20_000;
+const MAX_MULTIPART_BYTES = 64 * 1024 * 1024;
+
+async function detectVideoContentType(file: File) {
+  const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const isIsoMedia = bytes.length >= 8 && String.fromCharCode(...bytes.slice(4, 8)) === 'ftyp';
+  const extension = file.name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
+  const declaredAsVideo = file.type.startsWith('video/') || ['mp4', 'm4v', 'mov', '3gp', '3gpp'].includes(extension || '');
+  if (!declaredAsVideo) return '';
+  if (isIsoMedia) {
+    const brand = String.fromCharCode(...bytes.slice(8, 12)).toLowerCase();
+    const imageOrAudioBrands = new Set(['avif', 'avis', 'heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1', 'm4a ', 'm4b ', 'm4p ']);
+    if (imageOrAudioBrands.has(brand)) return '';
+    if (file.type === 'video/quicktime' || extension === 'mov') return 'video/quicktime';
+    if (file.type === 'video/3gpp' || extension === '3gp' || extension === '3gpp') return 'video/3gpp';
+    return 'video/mp4';
+  }
+  return '';
+}
 
 export async function GET(request: Request) {
   try {
@@ -40,11 +62,12 @@ export async function GET(request: Request) {
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const statement = db.prepare(
-      `SELECT r.*, COALESCE(s.label, r.status) AS status_label,
+      `SELECT r.*, COALESCE(s.label, 'Status não configurado') AS status_label,
         COALESCE(s.color, 'slate') AS status_color,
         COALESCE(store_option.color, '#64748b') AS store_color,
         (SELECT COUNT(*) FROM return_items i WHERE i.return_id = r.id) AS item_count,
         (SELECT COUNT(*) FROM return_photos p WHERE p.return_id = r.id) AS photo_count,
+        (SELECT COUNT(*) FROM return_videos v WHERE v.return_id = r.id) AS video_count,
         (SELECT p.id FROM return_photos p WHERE p.return_id = r.id ORDER BY p.created_at LIMIT 1) AS first_photo_id
        FROM returns r
        LEFT JOIN status_definitions s ON s.code = r.status
@@ -75,6 +98,10 @@ export async function POST(request: Request) {
     await ensureSchema();
     const { db, files } = getBindings();
     const actor = actorFrom(request);
+    const declaredBodyBytes = Number(request.headers.get('content-length'));
+    if (Number.isFinite(declaredBodyBytes) && declaredBodyBytes > MAX_MULTIPART_BYTES) {
+      return apiError('O envio ficou grande demais. Reduza o vídeo ou a quantidade de fotos.', 413);
+    }
     const formData = await request.formData();
     const getText = (name: string) => {
       const value = formData.get(name);
@@ -96,8 +123,9 @@ export async function POST(request: Request) {
 
     const data = parsed.data;
     const photos = formData.getAll('photos').filter((value): value is File => value instanceof File && value.size > 0);
-    if (data.source === 'PHOTO' && photos.length === 0) {
-      return apiError('Adicione pelo menos uma foto para registrar o recebimento.', 422);
+    const videos = formData.getAll('videos').filter((value): value is File => value instanceof File && value.size > 0);
+    if (data.source === 'PHOTO' && photos.length === 0 && videos.length === 0) {
+      return apiError('Adicione pelo menos uma foto ou um vídeo para registrar o recebimento.', 422);
     }
     if (data.source === 'MANUAL' && !data.product.trim()) {
       return apiError('Informe pelo menos um produto no cadastro completo.', 422);
@@ -106,9 +134,24 @@ export async function POST(request: Request) {
       return apiError('Informe o ID do pedido ou o código de rastreio.', 422);
     }
     if (photos.length > 8) return apiError('Envie no máximo 8 fotos por vez.', 422);
+    if (videos.length > 1) return apiError('Envie no máximo 1 vídeo por devolução.', 422);
     for (const photo of photos) {
       if (!photo.type.startsWith('image/')) return apiError('Envie somente arquivos de imagem.', 422);
       if (photo.size > 2.5 * 1024 * 1024) return apiError('Cada foto deve ter no máximo 2,5 MB.', 422);
+    }
+    const requestedVideoDurationMs = Number(getText('videoDurationMs'));
+    if (videos.length && (!Number.isFinite(requestedVideoDurationMs) || requestedVideoDurationMs <= 0 || requestedVideoDurationMs > MAX_VIDEO_DURATION_MS + 500)) {
+      return apiError('O vídeo deve ter no máximo 20 segundos.', 422);
+    }
+    const preparedVideos: Array<{ file: File; contentType: string; durationMs: number }> = [];
+    for (const video of videos) {
+      if (video.size > MAX_VIDEO_BYTES) return apiError('O vídeo deve ter no máximo 40 MB.', 422);
+      const contentType = await detectVideoContentType(video);
+      if (!contentType) return apiError('Use um vídeo MP4, MOV ou 3GP válido.', 422);
+      const measuredDurationMs = await readVideoDurationMs(video);
+      if (!measuredDurationMs) return apiError('Não foi possível confirmar a duração do vídeo. Grave novamente em MP4, MOV ou 3GP.', 422);
+      if (measuredDurationMs > MAX_VIDEO_DURATION_MS + 500) return apiError('O vídeo deve ter no máximo 20 segundos.', 422);
+      preparedVideos.push({ file: video, contentType, durationMs: measuredDurationMs });
     }
 
     const duplicateParts: string[] = [];
@@ -144,14 +187,30 @@ export async function POST(request: Request) {
       contentType: string;
       size: number;
     }> = [];
+    const videoRows: Array<{
+      id: string;
+      key: string;
+      fileName: string;
+      contentType: string;
+      size: number;
+      durationMs: number;
+    }> = [];
 
     for (const photo of photos) {
       const photoId = crypto.randomUUID();
       const safeName = photo.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120) || 'foto.jpg';
-      const key = `returns/${id}/${photoId}-${safeName}`;
+      const key = `returns/${id}/photos/${photoId}-${safeName}`;
       await files.put(key, photo.stream(), { httpMetadata: { contentType: photo.type } });
       uploadedKeys.push(key);
       photoRows.push({ id: photoId, key, fileName: photo.name, contentType: photo.type, size: photo.size });
+    }
+    for (const video of preparedVideos) {
+      const videoId = crypto.randomUUID();
+      const safeName = video.file.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120) || (video.contentType === 'video/webm' ? 'video.webm' : video.contentType === 'video/quicktime' ? 'video.mov' : 'video.mp4');
+      const key = `returns/${id}/videos/${videoId}-${safeName}`;
+      await files.put(key, video.file.stream(), { httpMetadata: { contentType: video.contentType } });
+      uploadedKeys.push(key);
+      videoRows.push({ id: videoId, key, fileName: video.file.name, contentType: video.contentType, size: video.file.size, durationMs: video.durationMs });
     }
 
     const operations = [
@@ -188,7 +247,7 @@ export async function POST(request: Request) {
           crypto.randomUUID(),
           id,
           actor,
-          JSON.stringify({ source: data.source, photos: photoRows.length, duplicateProtocols: duplicates.map((item) => item.protocol) }),
+          JSON.stringify({ source: data.source, photos: photos.length, videos: videos.length, duplicateProtocols: duplicates.map((item) => item.protocol) }),
           now,
         ),
     ];
@@ -212,6 +271,17 @@ export async function POST(request: Request) {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(photo.id, id, photo.key, photo.fileName, photo.contentType, photo.size, actor, now),
+      );
+    }
+    for (const video of videoRows) {
+      operations.push(
+        db
+          .prepare(
+            `INSERT INTO return_videos
+             (id, return_id, object_key, file_name, content_type, size, duration_ms, created_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(video.id, id, video.key, video.fileName, video.contentType, video.size, video.durationMs, actor, now),
       );
     }
 

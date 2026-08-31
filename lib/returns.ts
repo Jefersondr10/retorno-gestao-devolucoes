@@ -90,9 +90,12 @@ export type RetentionOverview = {
   returnRetentionDays: number;
   lastCleanupAt: string | null;
   lastCleanupPhotos: number;
+  lastCleanupVideos: number;
   lastCleanupReturns: number;
   eligiblePhotos: number;
   eligiblePhotoBytes: number;
+  eligibleVideos: number;
+  eligibleVideoBytes: number;
   eligibleReturns: number;
 };
 
@@ -122,6 +125,7 @@ export type ReturnSummary = {
   finalized_at: string | null;
   item_count: number;
   photo_count: number;
+  video_count: number;
   first_photo_id: string | null;
 };
 
@@ -146,6 +150,14 @@ export type ReturnDetail = ReturnSummary & {
     file_name: string;
     content_type: string;
     size: number;
+    created_at: string;
+  }>;
+  videos: Array<{
+    id: string;
+    file_name: string;
+    content_type: string;
+    size: number;
+    duration_ms: number | null;
     created_at: string;
   }>;
   history: Array<{

@@ -71,6 +71,17 @@ const statements = [
     created_by TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS return_videos (
+    id TEXT PRIMARY KEY,
+    return_id TEXT NOT NULL REFERENCES returns(id) ON DELETE CASCADE,
+    object_key TEXT NOT NULL UNIQUE,
+    file_name TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    duration_ms INTEGER,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS audit_events (
     id TEXT PRIMARY KEY,
     return_id TEXT REFERENCES returns(id) ON DELETE CASCADE,
@@ -86,6 +97,8 @@ const statements = [
   `CREATE INDEX IF NOT EXISTS idx_returns_order ON returns(order_id)`,
   `CREATE INDEX IF NOT EXISTS idx_return_items_return_id ON return_items(return_id)`,
   `CREATE INDEX IF NOT EXISTS idx_return_photos_return_id ON return_photos(return_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_return_videos_return_id ON return_videos(return_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_return_videos_object_key ON return_videos(object_key)`,
   `CREATE INDEX IF NOT EXISTS idx_audit_events_return_id_created ON audit_events(return_id, created_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_config_options_type_label ON config_options(type, label)`,
   `CREATE INDEX IF NOT EXISTS idx_config_options_type_active ON config_options(type, active, sort_order)`,
@@ -117,6 +130,7 @@ const defaultSystemSettings = [
   ['return_retention_days', '365'],
   ['last_cleanup_at', ''],
   ['last_cleanup_photos', '0'],
+  ['last_cleanup_videos', '0'],
   ['last_cleanup_returns', '0'],
 ] as const;
 
@@ -188,6 +202,7 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
         COALESCE(store_option.color, '#64748b') AS store_color,
         (SELECT COUNT(*) FROM return_items i WHERE i.return_id = r.id) AS item_count,
         (SELECT COUNT(*) FROM return_photos p WHERE p.return_id = r.id) AS photo_count,
+        (SELECT COUNT(*) FROM return_videos v WHERE v.return_id = r.id) AS video_count,
         (SELECT p.id FROM return_photos p WHERE p.return_id = r.id ORDER BY p.created_at LIMIT 1) AS first_photo_id
        FROM returns r
        LEFT JOIN status_definitions s ON s.code = r.status
@@ -199,10 +214,14 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
 
   if (!record) return null;
 
-  const [itemsResult, photosResult, historyResult, invoiceExemptConditionsResult] = await Promise.all([
+  const [itemsResult, photosResult, videosResult, historyResult, invoiceExemptConditionsResult] = await Promise.all([
     db.prepare('SELECT * FROM return_items WHERE return_id = ? ORDER BY rowid').bind(id).all(),
     db
       .prepare('SELECT id, file_name, content_type, size, created_at FROM return_photos WHERE return_id = ? ORDER BY created_at')
+      .bind(id)
+      .all(),
+    db
+      .prepare('SELECT id, file_name, content_type, size, duration_ms, created_at FROM return_videos WHERE return_id = ? ORDER BY created_at')
       .bind(id)
       .all(),
     db
@@ -216,10 +235,11 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
 
   const detail = {
     ...record,
-    status_label: record.status_label || record.status,
+    status_label: record.status_label || 'Status não configurado',
     status_color: record.status_color || 'slate',
     items: itemsResult.results,
     photos: photosResult.results,
+    videos: videosResult.results,
     history: historyResult.results,
   } as unknown as ReturnDetail;
 

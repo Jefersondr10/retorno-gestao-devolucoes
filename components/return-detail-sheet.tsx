@@ -231,7 +231,7 @@ export function ReturnDetailSheet({ open, returnId, statuses, onOpenChange, onCh
             </SheetHeader>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} />
+              <ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} videos={detail.videos} />
               <fieldset disabled={finalized} className="space-y-7 px-5 py-6 sm:px-6">
                 <section>
                   <SectionTitle icon={<Box />} title="Dados da devolução" />
@@ -395,6 +395,6 @@ function formatDate(value: string | null) {
 }
 
 function historyLabel(action: string) {
-  const labels: Record<string, string> = { CREATED: 'Devolução registrada', UPDATED: 'Informações atualizadas', FINALIZED: 'Devolução finalizada' };
+  const labels: Record<string, string> = { CREATED: 'Devolução registrada', UPDATED: 'Informações atualizadas', FINALIZED: 'Devolução finalizada', VIDEOS_DELETION_PENDING: 'Vídeos removidos; limpeza do espaço pendente', VIDEOS_DELETED: 'Vídeos excluídos para liberar espaço' };
   return labels[action] || action;
 }

@@ -13,6 +13,8 @@ import {
   MapPin,
   PackageCheck,
   Trash2,
+  Upload,
+  Video,
 } from 'lucide-react';
 
 import { ContinuousCamera } from '@/components/continuous-camera';
@@ -24,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import { MAX_PHOTO_BYTES, normalizeImageFile } from '@/lib/client-images';
+import { formatVideoDuration, formatVideoSize, prepareVideoFile, type PreparedVideo } from '@/lib/client-video';
 import type { ConfigOptionsResponse, ReturnDetail } from '@/lib/returns';
 
 type ReceiptFields = {
@@ -59,12 +62,16 @@ function defaultFields(): ReceiptFields {
 export function MobileReceiptPage() {
   const cameraInput = useRef<HTMLInputElement>(null);
   const galleryInput = useRef<HTMLInputElement>(null);
+  const videoCameraInput = useRef<HTMLInputElement>(null);
+  const videoGalleryInput = useRef<HTMLInputElement>(null);
   const [photos, setPhotos] = useState<File[]>([]);
+  const [video, setVideo] = useState<PreparedVideo | null>(null);
   const [options, setOptions] = useState<ConfigOptionsResponse>({ locations: [], stores: [], conditions: [] });
   const [fields, setFields] = useState<ReceiptFields>(defaultFields);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [preparingPhotos, setPreparingPhotos] = useState('');
+  const [preparingVideo, setPreparingVideo] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState<{
     item: ReturnDetail;
@@ -81,8 +88,10 @@ export function MobileReceiptPage() {
     })),
     [photos],
   );
+  const videoPreviewUrl = useMemo(() => video ? URL.createObjectURL(video.file) : '', [video]);
 
   useEffect(() => () => previews.forEach(({ url }) => URL.revokeObjectURL(url)), [previews]);
+  useEffect(() => () => { if (videoPreviewUrl) URL.revokeObjectURL(videoPreviewUrl); }, [videoPreviewUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -150,8 +159,28 @@ export function MobileReceiptPage() {
     setError('');
   }
 
+  async function addVideo(fileList: FileList | null) {
+    const file = fileList?.[0];
+    if (!file) return;
+    setPreparingVideo(true);
+    setError('');
+    try {
+      setVideo(await prepareVideoFile(file));
+    } catch (videoError) {
+      setError(videoError instanceof Error ? videoError.message : 'Não foi possível preparar o vídeo.');
+    } finally {
+      setPreparingVideo(false);
+    }
+  }
+
+  function removeVideo() {
+    setVideo(null);
+    setError('');
+  }
+
   function reset() {
     setPhotos([]);
+    setVideo(null);
     setFields(defaultFields());
     setDetailsOpen(false);
     setError('');
@@ -162,8 +191,8 @@ export function MobileReceiptPage() {
   async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting) return;
-    if (photos.length === 0) {
-      setError('Tire ou escolha pelo menos uma foto para registrar a devolução.');
+    if (photos.length === 0 && !video) {
+      setError('Tire uma foto ou grave um vídeo para registrar a devolução.');
       return;
     }
     if (!fields.receivedLocation.trim()) {
@@ -186,6 +215,10 @@ export function MobileReceiptPage() {
     payload.set('quantity', fields.quantity || '1');
     payload.set('notes', fields.notes);
     photos.forEach((photo) => payload.append('photos', photo));
+    if (video) {
+      payload.append('videos', video.file);
+      payload.set('videoDurationMs', String(video.durationMs));
+    }
 
     try {
       const response = await fetch('/api/returns', { method: 'POST', body: payload });
@@ -196,6 +229,8 @@ export function MobileReceiptPage() {
       };
       if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível registrar a devolução.');
       setSuccess({ item: result.item, duplicates: result.duplicates || [] });
+      setPhotos([]);
+      setVideo(null);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível registrar a devolução.');
@@ -209,6 +244,7 @@ export function MobileReceiptPage() {
     alt: preview.alt,
     label: `Foto ${index + 1} antes do envio`,
   }));
+  const mediaCount = photos.length + (video ? 1 : 0);
 
   if (success) {
     return (
@@ -219,9 +255,7 @@ export function MobileReceiptPage() {
           </div>
           <p className="mt-5 text-sm font-semibold text-primary">Recebimento concluído</p>
           <h1 className="display-title mt-1 text-2xl">{success.item.protocol} registrada</h1>
-          <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-            As {success.item.photo_count} {success.item.photo_count === 1 ? 'foto foi enviada' : 'fotos foram enviadas'} e a devolução já está disponível para triagem no computador.
-          </p>
+          <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-muted-foreground">Foram enviados {success.item.photo_count} {success.item.photo_count === 1 ? 'foto' : 'fotos'} e {success.item.video_count} {success.item.video_count === 1 ? 'vídeo' : 'vídeos'}. A devolução já está disponível para triagem no computador.</p>
 
           {success.duplicates.length > 0 && (
             <Alert className="mt-5 border-amber-200 bg-amber-50 text-left text-amber-900">
@@ -258,7 +292,7 @@ export function MobileReceiptPage() {
           </div>
           <div className="min-w-0">
             <h1 className="truncate text-base font-bold">Nova devolução</h1>
-            <p className="truncate text-xs text-muted-foreground">Recebimento rápido por foto</p>
+            <p className="truncate text-xs text-muted-foreground">Recebimento rápido por foto ou vídeo</p>
           </div>
           <span className="ml-auto rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary">CELULAR</span>
         </div>
@@ -268,9 +302,9 @@ export function MobileReceiptPage() {
         <div className="space-y-5 px-4 py-6 sm:px-6 sm:py-8">
           <section>
             <p className="text-sm font-semibold text-primary">Passo principal</p>
-            <h2 className="display-title mt-1 text-2xl">Fotografe a devolução</h2>
+            <h2 className="display-title mt-1 text-2xl">Fotografe ou grave a devolução</h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-              Fotografe a etiqueta, a embalagem e o produto. Os outros dados podem ser completados depois no computador.
+              Registre a etiqueta, a embalagem e o produto. Você pode adicionar até 8 fotos e 1 vídeo curto; os outros dados podem ser preenchidos depois no computador.
             </p>
           </section>
 
@@ -328,7 +362,7 @@ export function MobileReceiptPage() {
               <div className="mt-3 rounded-2xl border border-dashed bg-card/60 px-5 py-7 text-center">
                 <Camera className="mx-auto size-6 text-muted-foreground" />
                 <p className="mt-2 text-sm font-semibold">Nenhuma foto adicionada</p>
-                <p className="mt-1 text-xs text-muted-foreground">A primeira foto já é suficiente para abrir o protocolo.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Uma foto ou um vídeo já é suficiente para abrir o protocolo.</p>
               </div>
             ) : (
               <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
@@ -347,7 +381,7 @@ export function MobileReceiptPage() {
                     <span className="pointer-events-none absolute bottom-1.5 left-1.5 grid size-6 place-items-center rounded-lg bg-black/60 text-[11px] font-bold text-white">{index + 1}</span>
                     <button
                       type="button"
-                      className="absolute right-1.5 top-1.5 grid size-9 place-items-center rounded-xl bg-black/65 text-white shadow-md outline-none hover:bg-black/80 focus-visible:ring-3 focus-visible:ring-white/70"
+                      className="absolute right-1 top-1 grid size-11 place-items-center rounded-xl bg-black/65 text-white shadow-md outline-none hover:bg-black/80 focus-visible:ring-3 focus-visible:ring-white/70"
                       onClick={() => removePhoto(index)}
                       aria-label={`Remover foto ${index + 1}`}
                     >
@@ -357,6 +391,28 @@ export function MobileReceiptPage() {
                 ))}
               </div>
             )}
+          </section>
+
+          <section className="rounded-3xl border bg-card p-4 shadow-[var(--shadow-card)] sm:p-5" aria-labelledby="video-title">
+            <div className="flex items-start gap-3">
+              <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-rose-50 text-rose-600"><Video className="size-5" /></span>
+              <div className="min-w-0 flex-1"><h2 id="video-title" className="text-sm font-semibold">Vídeo curto <span className="font-normal text-muted-foreground">· opcional</span></h2><p className="mt-1 text-xs leading-5 text-muted-foreground">Até 20 segundos e 40 MB. Use para mostrar defeitos, ruídos ou o estado completo do pacote.</p></div>
+            </div>
+            {video && videoPreviewUrl ? (
+              <div className="mt-4 overflow-hidden rounded-2xl border bg-slate-950">
+                {/* This local package preview has no authored dialogue or caption track. */}
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <video src={videoPreviewUrl} controls playsInline preload="metadata" className="aspect-video w-full bg-black object-contain" aria-label="Prévia do vídeo selecionado" />
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-card px-3 py-3"><p className="text-xs font-medium">{formatVideoDuration(video.durationMs)} · {formatVideoSize(video.file.size)}</p><Button type="button" variant="ghost" size="sm" className="h-11 text-destructive" onClick={removeVideo}><Trash2 /> Remover vídeo</Button></div>
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <Button type="button" variant="outline" className="h-12 rounded-xl" disabled={submitting || preparingVideo} onClick={() => videoCameraInput.current?.click()}>{preparingVideo ? <Loader2 className="animate-spin" /> : <Video />} Gravar vídeo</Button>
+                <Button type="button" variant="outline" className="h-12 rounded-xl" disabled={submitting || preparingVideo} onClick={() => videoGalleryInput.current?.click()}><Upload /> Escolher vídeo</Button>
+              </div>
+            )}
+            <input ref={videoCameraInput} className="sr-only" type="file" accept="video/*" capture="environment" onChange={(event) => { void addVideo(event.target.files); event.target.value = ''; }} aria-label="Gravar vídeo com a câmera traseira" />
+            <input ref={videoGalleryInput} className="sr-only" type="file" accept="video/mp4,video/quicktime,video/3gpp,.mp4,.m4v,.mov,.3gp,.3gpp" onChange={(event) => { void addVideo(event.target.files); event.target.value = ''; }} aria-label="Escolher vídeo da galeria" />
           </section>
 
           <details
@@ -373,36 +429,36 @@ export function MobileReceiptPage() {
               <ChevronDown className="size-4 text-muted-foreground transition group-open:rotate-180" />
             </summary>
             <div className="grid gap-4 border-t px-4 py-5 sm:grid-cols-2">
-              <Field label="Local de recebimento">
-                <NativeSelect className="w-full" value={fields.receivedLocation} onChange={(event) => updateField('receivedLocation', event.target.value)}>
+              <Field label="Local de recebimento" htmlFor="receipt-location">
+                <NativeSelect id="receipt-location" className="w-full" value={fields.receivedLocation} onChange={(event) => updateField('receivedLocation', event.target.value)}>
                   <NativeSelectOption value="">Selecione o local</NativeSelectOption>
                   {options.locations.map((location) => <NativeSelectOption key={location.code} value={location.label}>{location.label}</NativeSelectOption>)}
                 </NativeSelect>
               </Field>
-              <Field label="Data e hora recebida">
-                <Input className="h-11" type="datetime-local" value={fields.receivedAt} onChange={(event) => updateField('receivedAt', event.target.value)} />
+              <Field label="Data e hora recebida" htmlFor="receipt-date">
+                <Input id="receipt-date" className="h-11" type="datetime-local" value={fields.receivedAt} onChange={(event) => updateField('receivedAt', event.target.value)} />
               </Field>
-              <Field label="Loja / canal" hint="Opcional">
-                <NativeSelect className="w-full" value={fields.store} onChange={(event) => updateField('store', event.target.value)}>
+              <Field label="Loja / canal" htmlFor="receipt-store" hint="Opcional">
+                <NativeSelect id="receipt-store" className="w-full" value={fields.store} onChange={(event) => updateField('store', event.target.value)}>
                   <NativeSelectOption value="">Selecionar depois</NativeSelectOption>
                   {options.stores.map((store) => <NativeSelectOption key={store.code} value={store.label}>{store.label}</NativeSelectOption>)}
                 </NativeSelect>
               </Field>
-              <Field label="ID do pedido" hint="Opcional">
-                <Input className="h-11" placeholder="Ex.: 200000123456" value={fields.orderId} onChange={(event) => updateField('orderId', event.target.value)} />
+              <Field label="ID do pedido" htmlFor="receipt-order" hint="Opcional">
+                <Input id="receipt-order" className="h-11" placeholder="Ex.: 200000123456" value={fields.orderId} onChange={(event) => updateField('orderId', event.target.value)} />
               </Field>
-              <Field label="Código de rastreio" hint="Opcional">
-                <Input className="h-11 uppercase" placeholder="Ex.: AB123456789BR" value={fields.trackingCode} onChange={(event) => updateField('trackingCode', event.target.value)} />
+              <Field label="Código de rastreio" htmlFor="receipt-tracking" hint="Opcional">
+                <Input id="receipt-tracking" className="h-11 uppercase" placeholder="Ex.: AB123456789BR" value={fields.trackingCode} onChange={(event) => updateField('trackingCode', event.target.value)} />
               </Field>
-              <Field label="Produto" hint="Opcional">
-                <Input className="h-11" placeholder="Nome ou SKU" value={fields.product} onChange={(event) => updateField('product', event.target.value)} />
+              <Field label="Produto" htmlFor="receipt-product" hint="Opcional">
+                <Input id="receipt-product" className="h-11" placeholder="Nome ou SKU" value={fields.product} onChange={(event) => updateField('product', event.target.value)} />
               </Field>
-              <Field label="Quantidade" hint="Opcional">
-                <Input className="h-11" type="number" inputMode="numeric" min={1} value={fields.quantity} onChange={(event) => updateField('quantity', event.target.value)} />
+              <Field label="Quantidade" htmlFor="receipt-quantity" hint="Opcional">
+                <Input id="receipt-quantity" className="h-11" type="number" inputMode="numeric" min={1} value={fields.quantity} onChange={(event) => updateField('quantity', event.target.value)} />
               </Field>
               <div className="sm:col-span-2">
-                <Field label="Observação" hint="Opcional">
-                  <Textarea rows={3} placeholder="Estado da embalagem ou alguma informação importante..." value={fields.notes} onChange={(event) => updateField('notes', event.target.value)} />
+                <Field label="Observação" htmlFor="receipt-notes" hint="Opcional">
+                  <Textarea id="receipt-notes" rows={3} placeholder="Estado da embalagem ou alguma informação importante..." value={fields.notes} onChange={(event) => updateField('notes', event.target.value)} />
                 </Field>
               </div>
             </div>
@@ -416,17 +472,17 @@ export function MobileReceiptPage() {
             </Alert>
           )}
           <p className="text-center text-xs leading-5 text-muted-foreground">
-            As fotos ficam protegidas no sistema e só podem ser abertas por pessoas com acesso.
+            Fotos e vídeos ficam protegidos no sistema e só podem ser abertos por pessoas com acesso.
           </p>
         </div>
 
         <footer className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t bg-card/96 px-4 pt-3 shadow-[0_-12px_35px_rgb(28_39_36/8%)] backdrop-blur-xl sm:px-6">
           <div className="mx-auto max-w-3xl">
-            <Button type="submit" className="h-13 w-full rounded-xl text-[15px] font-bold shadow-[0_10px_24px_rgb(13_96_83/20%)]" disabled={submitting || Boolean(preparingPhotos) || photos.length === 0}>
-              {submitting ? <><Loader2 className="animate-spin" /> Enviando {photos.length} {photos.length === 1 ? 'foto' : 'fotos'}...</> : preparingPhotos ? <><Loader2 className="animate-spin" /> {preparingPhotos}</> : <><CheckCircle2 /> Registrar com {photos.length} {photos.length === 1 ? 'foto' : 'fotos'}</>}
+            <Button type="submit" className="h-13 w-full rounded-xl text-[15px] font-bold shadow-[0_10px_24px_rgb(13_96_83/20%)]" disabled={submitting || Boolean(preparingPhotos) || preparingVideo || mediaCount === 0}>
+              {submitting ? <><Loader2 className="animate-spin" /> Enviando {mediaCount} {mediaCount === 1 ? 'arquivo' : 'arquivos'}...</> : preparingPhotos ? <><Loader2 className="animate-spin" /> {preparingPhotos}</> : preparingVideo ? <><Loader2 className="animate-spin" /> Preparando vídeo…</> : <><CheckCircle2 /> Registrar recebimento</>}
             </Button>
             <p className="mt-2 text-center text-[11px] text-muted-foreground" aria-live="polite">
-              {submitting ? 'Não feche esta tela enquanto as fotos são enviadas.' : 'Pedido, rastreio e produto podem ser preenchidos depois.'}
+              {submitting ? 'Não feche esta tela enquanto os arquivos são enviados.' : 'Pedido, rastreio e produto podem ser preenchidos depois.'}
             </p>
           </div>
         </footer>
@@ -442,11 +498,11 @@ export function MobileReceiptPage() {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, hint, children }: { label: string; htmlFor: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <Label>{label}</Label>
+        <Label htmlFor={htmlFor}>{label}</Label>
         {hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
       </div>
       {children}

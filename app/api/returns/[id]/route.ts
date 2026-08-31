@@ -1,9 +1,19 @@
 import { actorFrom, apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
+import { completeStorageDeletionEvents, prepareStorageDeletionOutbox } from '@/lib/retention';
 import { getBlockingReasons, updateReturnSchema } from '@/lib/returns';
 
 export const dynamic = 'force-dynamic';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+function queuedObjectKeys(details: string | null) {
+  try {
+    const parsed = JSON.parse(details || '{}') as { objectKeys?: unknown };
+    return Array.isArray(parsed.objectKeys) ? parsed.objectKeys.filter((key): key is string => typeof key === 'string' && key.length > 0) : [];
+  } catch {
+    return [];
+  }
+}
 
 export async function GET(_request: Request, context: RouteContext) {
   try {
@@ -154,24 +164,46 @@ export async function DELETE(request: Request, context: RouteContext) {
       return apiError('Confirme o protocolo para excluir esta devolução.', 422);
     }
 
-    const { db, files } = getBindings();
-    const photos = await db
-      .prepare('SELECT object_key FROM return_photos WHERE return_id = ?')
-      .bind(id)
-      .all<{ object_key: string }>();
-    if (photos.results.length) await files.delete(photos.results.map((photo) => photo.object_key));
+    const { db } = getBindings();
+    const [photos, videos, pendingVideoDeletions] = await Promise.all([
+      db.prepare('SELECT object_key FROM return_photos WHERE return_id = ?').bind(id).all<{ object_key: string }>(),
+      db.prepare('SELECT object_key FROM return_videos WHERE return_id = ?').bind(id).all<{ object_key: string }>(),
+      db.prepare("SELECT details FROM audit_events WHERE return_id = ? AND action = 'VIDEOS_DELETION_PENDING'").bind(id).all<{ details: string | null }>(),
+    ]);
+    const objectKeys = [...new Set([
+      ...photos.results.map((photo) => photo.object_key),
+      ...videos.results.map((video) => video.object_key),
+      ...pendingVideoDeletions.results.flatMap((event) => queuedObjectKeys(event.details)),
+    ])];
 
     const now = new Date().toISOString();
+    const actor = actorFrom(request);
+    const outbox = prepareStorageDeletionOutbox(db, {
+      objectKeys,
+      actor,
+      now,
+      reason: 'RETURN_DELETED',
+      details: {
+        returnId: id,
+        protocol: current.protocol,
+        photoCount: photos.results.length,
+        videoCount: videos.results.length,
+      },
+    });
     await db.batch([
       db
         .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'RETURN_DELETED', ?, ?)")
-        .bind(crypto.randomUUID(), actorFrom(request), JSON.stringify({ protocol: current.protocol, photoCount: photos.results.length }), now),
+        .bind(crypto.randomUUID(), actor, JSON.stringify({ protocol: current.protocol, photoCount: photos.results.length, videoCount: videos.results.length }), now),
+      ...outbox.operations,
       db.prepare('DELETE FROM audit_events WHERE return_id = ?').bind(id),
       db.prepare('DELETE FROM return_items WHERE return_id = ?').bind(id),
       db.prepare('DELETE FROM return_photos WHERE return_id = ?').bind(id),
+      db.prepare('DELETE FROM return_videos WHERE return_id = ?').bind(id),
       db.prepare('DELETE FROM returns WHERE id = ?').bind(id),
     ]);
-    return Response.json({ deleted: true, protocol: current.protocol });
+    const completedStorageEvents = await completeStorageDeletionEvents(outbox.events);
+    const storagePending = completedStorageEvents < outbox.events.length;
+    return Response.json({ deleted: true, protocol: current.protocol, storagePending }, { status: storagePending ? 202 : 200 });
   } catch (error) {
     console.error(error);
     return apiError('Não foi possível excluir a devolução.', 500);
