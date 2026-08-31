@@ -1,10 +1,12 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Expand, Images } from 'lucide-react';
+import { Download, Expand, Images } from 'lucide-react';
 
 import { PhotoLightbox } from '@/components/photo-lightbox';
 import { Badge } from '@/components/ui/badge';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import type { ReturnDetail } from '@/lib/returns';
 
 export function ReturnPhotoGallery({
@@ -29,6 +31,20 @@ export function ReturnPhotoGallery({
   if (photos.length === 0) return null;
   const safeSelected = Math.min(selected, photos.length - 1);
   const active = viewerPhotos[safeSelected];
+  const activePhoto = photos[safeSelected];
+
+  function downloadAll() {
+    photos.forEach((photo, index) => {
+      window.setTimeout(() => {
+        const link = document.createElement('a');
+        link.href = `/api/photos/${photo.id}?download=1`;
+        link.download = photo.file_name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }, index * 180);
+    });
+  }
 
   return (
     <section className="border-b bg-muted/25 px-5 py-5 sm:px-6" aria-labelledby="return-photos-title">
@@ -55,6 +71,13 @@ export function ReturnPhotoGallery({
           <Expand className="size-4" /> Ampliar e dar zoom
         </span>
       </button>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <a href={`/api/photos/${activePhoto.id}?download=1`} download={activePhoto.file_name} className={cn(buttonVariants({ variant: 'outline', size: 'lg' }), 'h-10 rounded-xl')}>
+          <Download /> Baixar foto {safeSelected + 1}
+        </a>
+        {photos.length > 1 && <ButtonDownloadAll onClick={downloadAll} count={photos.length} />}
+      </div>
 
       {photos.length > 1 && (
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1" aria-label="Miniaturas das fotos">
@@ -83,4 +106,8 @@ export function ReturnPhotoGallery({
       />
     </section>
   );
+}
+
+function ButtonDownloadAll({ onClick, count }: { onClick: () => void; count: number }) {
+  return <Button type="button" variant="ghost" className="h-10 rounded-xl" onClick={onClick}><Download /> Baixar todas ({count})</Button>;
 }

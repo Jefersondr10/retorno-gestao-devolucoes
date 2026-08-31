@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   try {
     await ensureSchema();
     const { id } = await context.params;
@@ -19,7 +19,8 @@ export async function GET(_request: Request, context: RouteContext) {
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set('Content-Type', photo.content_type);
-    headers.set('Content-Disposition', `inline; filename="${photo.file_name.replace(/["\r\n]/g, '')}"`);
+    const disposition = new URL(request.url).searchParams.get('download') === '1' ? 'attachment' : 'inline';
+    headers.set('Content-Disposition', `${disposition}; filename="${photo.file_name.replace(/["\r\n]/g, '')}"`);
     headers.set('Cache-Control', 'private, max-age=3600');
     return new Response(object.body, { headers });
   } catch (error) {

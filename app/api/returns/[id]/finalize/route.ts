@@ -1,5 +1,4 @@
 import { actorFrom, apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
-import { getBlockingReasons } from '@/lib/returns';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +12,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (!item) return apiError('Devolução não encontrada.', 404);
     if (item.status === 'FINALIZED') return Response.json({ item });
 
-    const blockingReasons = getBlockingReasons(item);
+    const blockingReasons = item.blockingReasons;
     if (blockingReasons.length) {
       return apiError('A devolução ainda não pode ser finalizada.', 422, { blockingReasons });
     }

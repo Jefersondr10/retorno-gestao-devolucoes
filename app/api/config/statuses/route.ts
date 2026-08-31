@@ -22,8 +22,13 @@ export async function POST(request: Request) {
     const body = (await request.json()) as { label?: string; color?: string };
     const label = body.label?.trim();
     if (!label || label.length > 60) return apiError('Informe um nome de status com até 60 caracteres.', 422);
-    const allowedColors = ['slate', 'amber', 'blue', 'sky', 'orange', 'violet', 'emerald', 'rose'];
-    const color = allowedColors.includes(body.color || '') ? body.color! : 'slate';
+    const namedColors = ['slate', 'amber', 'blue', 'sky', 'orange', 'violet', 'emerald', 'rose'];
+    const requestedColor = body.color?.trim() || '';
+    const color = /^#[0-9a-f]{6}$/i.test(requestedColor)
+      ? requestedColor.toLowerCase()
+      : namedColors.includes(requestedColor)
+        ? requestedColor
+        : '#64748b';
     const normalized = label
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')

@@ -15,13 +15,15 @@ import {
   Trash2,
 } from 'lucide-react';
 
+import { ContinuousCamera } from '@/components/continuous-camera';
 import { PhotoLightbox } from '@/components/photo-lightbox';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import type { ReturnDetail } from '@/lib/returns';
+import type { ConfigOptionsResponse, ReturnDetail } from '@/lib/returns';
 
 type ReceiptFields = {
   receivedLocation: string;
@@ -57,6 +59,7 @@ export function MobileReceiptPage() {
   const cameraInput = useRef<HTMLInputElement>(null);
   const galleryInput = useRef<HTMLInputElement>(null);
   const [photos, setPhotos] = useState<File[]>([]);
+  const [options, setOptions] = useState<ConfigOptionsResponse>({ locations: [], stores: [], conditions: [] });
   const [fields, setFields] = useState<ReceiptFields>(defaultFields);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -78,6 +81,28 @@ export function MobileReceiptPage() {
   );
 
   useEffect(() => () => previews.forEach(({ url }) => URL.revokeObjectURL(url)), [previews]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/config/options')
+      .then(async (response) => {
+        const result = (await response.json()) as ConfigOptionsResponse;
+        if (!response.ok) throw new Error('Não foi possível carregar locais e lojas.');
+        return result;
+      })
+      .then((result) => {
+        if (cancelled) return;
+        setOptions(result);
+        setFields((current) => ({
+          ...current,
+          receivedLocation: result.locations.some((item) => item.label === current.receivedLocation)
+            ? current.receivedLocation
+            : result.locations[0]?.label || current.receivedLocation,
+        }));
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   function updateField(name: keyof ReceiptFields, value: string) {
     setFields((current) => ({ ...current, [name]: value }));
@@ -102,6 +127,15 @@ export function MobileReceiptPage() {
       else setError('');
       return [...current, ...incoming.slice(0, available)];
     });
+  }
+
+  function addCapturedPhoto(file: File) {
+    if (!file.type.startsWith('image/') || file.size > 10 * 1024 * 1024) {
+      setError('A foto capturada não pôde ser adicionada. Use a câmera do aparelho como alternativa.');
+      return;
+    }
+    setPhotos((current) => current.length >= 8 ? current : [...current, file]);
+    setError('');
   }
 
   function removePhoto(index: number) {
@@ -234,16 +268,13 @@ export function MobileReceiptPage() {
           </section>
 
           <section className="grid gap-3 sm:grid-cols-2" aria-label="Adicionar fotos">
-            <button
-              type="button"
-              onClick={() => cameraInput.current?.click()}
+            <ContinuousCamera
               disabled={photos.length >= 8 || submitting}
-              className="flex min-h-36 flex-col items-center justify-center rounded-3xl bg-primary px-5 py-6 text-center text-primary-foreground shadow-[0_14px_32px_rgb(13_96_83/22%)] outline-none transition hover:bg-primary/90 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
-            >
-              <span className="grid size-12 place-items-center rounded-2xl bg-white/15"><Camera className="size-6" /></span>
-              <span className="mt-3 text-base font-bold">Tirar foto</span>
-              <span className="mt-1 text-xs text-primary-foreground/80">Abrir câmera traseira</span>
-            </button>
+              photoCount={photos.length}
+              previews={previews}
+              onCapture={addCapturedPhoto}
+              onNativeFallback={() => cameraInput.current?.click()}
+            />
             <button
               type="button"
               onClick={() => galleryInput.current?.click()}
@@ -253,6 +284,9 @@ export function MobileReceiptPage() {
               <span className="grid size-11 place-items-center rounded-2xl bg-primary/10 text-primary"><ImagePlus className="size-5" /></span>
               <span className="mt-3 text-sm font-bold">Escolher da galeria</span>
               <span className="mt-1 text-xs text-muted-foreground">Selecionar várias fotos</span>
+            </button>
+            <button type="button" className="min-h-11 rounded-xl text-sm font-semibold text-primary underline-offset-4 hover:underline sm:col-span-2" onClick={() => cameraInput.current?.click()} disabled={photos.length >= 8 || submitting}>
+              Usar a câmera do aparelho em vez da câmera contínua
             </button>
             <input
               ref={cameraInput}
@@ -333,13 +367,19 @@ export function MobileReceiptPage() {
             </summary>
             <div className="grid gap-4 border-t px-4 py-5 sm:grid-cols-2">
               <Field label="Local de recebimento">
-                <Input className="h-11" value={fields.receivedLocation} onChange={(event) => updateField('receivedLocation', event.target.value)} />
+                <NativeSelect className="w-full" value={fields.receivedLocation} onChange={(event) => updateField('receivedLocation', event.target.value)}>
+                  <NativeSelectOption value="">Selecione o local</NativeSelectOption>
+                  {options.locations.map((location) => <NativeSelectOption key={location.code} value={location.label}>{location.label}</NativeSelectOption>)}
+                </NativeSelect>
               </Field>
               <Field label="Data e hora recebida">
                 <Input className="h-11" type="datetime-local" value={fields.receivedAt} onChange={(event) => updateField('receivedAt', event.target.value)} />
               </Field>
               <Field label="Loja / canal" hint="Opcional">
-                <Input className="h-11" placeholder="Ex.: Mercado Livre" value={fields.store} onChange={(event) => updateField('store', event.target.value)} />
+                <NativeSelect className="w-full" value={fields.store} onChange={(event) => updateField('store', event.target.value)}>
+                  <NativeSelectOption value="">Selecionar depois</NativeSelectOption>
+                  {options.stores.map((store) => <NativeSelectOption key={store.code} value={store.label}>{store.label}</NativeSelectOption>)}
+                </NativeSelect>
               </Field>
               <Field label="ID do pedido" hint="Opcional">
                 <Input className="h-11" placeholder="Ex.: 200000123456" value={fields.orderId} onChange={(event) => updateField('orderId', event.target.value)} />

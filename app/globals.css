@@ -57,6 +57,10 @@ body {
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
 @media (max-width: 640px) {
   input,
   select,

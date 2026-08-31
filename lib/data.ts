@@ -12,6 +12,18 @@ const statements = [
     sort_order INTEGER NOT NULL DEFAULT 100,
     active INTEGER NOT NULL DEFAULT 1
   )`,
+  `CREATE TABLE IF NOT EXISTS config_options (
+    code TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    label TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#64748b',
+    is_system INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    active INTEGER NOT NULL DEFAULT 1,
+    requires_invoice INTEGER NOT NULL DEFAULT 1,
+    requires_notes INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS returns (
     id TEXT PRIMARY KEY,
     protocol TEXT NOT NULL UNIQUE,
@@ -69,6 +81,8 @@ const statements = [
   `CREATE INDEX IF NOT EXISTS idx_return_items_return_id ON return_items(return_id)`,
   `CREATE INDEX IF NOT EXISTS idx_return_photos_return_id ON return_photos(return_id)`,
   `CREATE INDEX IF NOT EXISTS idx_audit_events_return_id_created ON audit_events(return_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_config_options_type_label ON config_options(type, label)`,
+  `CREATE INDEX IF NOT EXISTS idx_config_options_type_active ON config_options(type, active, sort_order)`,
 ];
 
 const defaultStatuses = [
@@ -79,6 +93,16 @@ const defaultStatuses = [
   ['WAITING_ENTRY', 'Aguardando nota', 'violet', 50],
   ['READY', 'Pronta para finalizar', 'emerald', 60],
   ['FINALIZED', 'Finalizada', 'slate', 999],
+] as const;
+
+const defaultConfigOptions = [
+  ['LOCATION_SAO_PAULO', 'LOCATION', 'Escritório de São Paulo', '#0f766e', 1, 10, 1, 0],
+  ['NEW', 'CONDITION', 'Novo', '#16a34a', 1, 10, 1, 0],
+  ['SEMI_NEW', 'CONDITION', 'Seminovo', '#0891b2', 1, 20, 1, 0],
+  ['DEFECTIVE', 'CONDITION', 'Defeito', '#dc2626', 1, 30, 0, 1],
+  ['DAMAGED', 'CONDITION', 'Avariado', '#ea580c', 1, 40, 1, 1],
+  ['INCOMPLETE', 'CONDITION', 'Incompleto', '#ca8a04', 1, 50, 1, 1],
+  ['OTHER', 'CONDITION', 'Outro', '#64748b', 1, 60, 1, 1],
 ] as const;
 
 let schemaPromise: Promise<void> | null = null;
@@ -103,6 +127,17 @@ export async function ensureSchema() {
                VALUES (?, ?, ?, 1, ?, 1)`,
             )
             .bind(code, label, color, order),
+        ),
+      );
+      await db.batch(
+        defaultConfigOptions.map(([code, type, label, color, isSystem, order, requiresInvoice, requiresNotes]) =>
+          db
+            .prepare(
+              `INSERT OR IGNORE INTO config_options
+               (code, type, label, color, is_system, sort_order, active, requires_invoice, requires_notes, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+            )
+            .bind(code, type, label, color, isSystem, order, requiresInvoice, requiresNotes, new Date().toISOString()),
         ),
       );
       await db.prepare('PRAGMA optimize').run();
@@ -140,7 +175,7 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
 
   if (!record) return null;
 
-  const [itemsResult, photosResult, historyResult] = await Promise.all([
+  const [itemsResult, photosResult, historyResult, invoiceExemptConditionsResult] = await Promise.all([
     db.prepare('SELECT * FROM return_items WHERE return_id = ? ORDER BY rowid').bind(id).all(),
     db
       .prepare('SELECT id, file_name, content_type, size, created_at FROM return_photos WHERE return_id = ? ORDER BY created_at')
@@ -150,6 +185,9 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
       .prepare('SELECT id, actor, action, details, created_at FROM audit_events WHERE return_id = ? ORDER BY created_at DESC LIMIT 100')
       .bind(id)
       .all(),
+    db
+      .prepare("SELECT code, requires_invoice, requires_notes FROM config_options WHERE type = 'CONDITION' AND active = 1")
+      .all<{ code: string; requires_invoice: number; requires_notes: number }>(),
   ]);
 
   const detail = {
@@ -161,7 +199,11 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
     history: historyResult.results,
   } as unknown as ReturnDetail;
 
-  detail.blockingReasons = getBlockingReasons(detail);
+  detail.blockingReasons = getBlockingReasons(
+    detail,
+    invoiceExemptConditionsResult.results.filter((condition) => condition.requires_invoice === 0).map((condition) => condition.code),
+    invoiceExemptConditionsResult.results.filter((condition) => condition.requires_notes === 1).map((condition) => condition.code),
+  );
   detail.canFinalize = detail.blockingReasons.length === 0 && detail.status !== 'FINALIZED';
   return detail;
 }

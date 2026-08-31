@@ -20,24 +20,14 @@ import {
   X,
 } from 'lucide-react';
 
-import { ReturnDetailSheet } from '@/components/return-detail-sheet';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import type { ReturnDetail, ReturnSummary, StatusDefinition } from '@/lib/returns';
-
-const statusClasses: Record<string, string> = {
-  amber: 'border-amber-200 bg-amber-50 text-amber-800',
-  blue: 'border-blue-200 bg-blue-50 text-blue-800',
-  sky: 'border-sky-200 bg-sky-50 text-sky-800',
-  orange: 'border-orange-200 bg-orange-50 text-orange-800',
-  violet: 'border-violet-200 bg-violet-50 text-violet-800',
-  emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-  rose: 'border-rose-200 bg-rose-50 text-rose-800',
-  slate: 'border-slate-200 bg-slate-50 text-slate-700',
-};
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import type { ConfigOptionsResponse, ReturnSummary, StatusDefinition } from '@/lib/returns';
+import { statusClass, statusDotStyle, statusStyle } from '@/lib/status-colors';
 
 export function Dashboard() {
   const [items, setItems] = useState<ReturnSummary[]>([]);
@@ -46,9 +36,9 @@ export function Dashboard() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [storeFilter, setStoreFilter] = useState('');
+  const [configuredStores, setConfiguredStores] = useState<string[]>([]);
   const [includeFinalized, setIncludeFinalized] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
-  const [notice, setNotice] = useState('');
 
   const loadReturns = useCallback(async (query = search, includeClosed = includeFinalized) => {
     setLoading(true);
@@ -70,9 +60,15 @@ export function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch('/api/config/statuses')
-      .then(async (response) => ({ response, result: (await response.json()) as { items?: StatusDefinition[] } }))
-      .then(({ response, result }) => { if (!cancelled && response.ok) setStatuses(result.items || []); })
+    void Promise.all([
+      fetch('/api/config/statuses').then(async (response) => ({ response, result: (await response.json()) as { items?: StatusDefinition[] } })),
+      fetch('/api/config/options').then(async (response) => ({ response, result: (await response.json()) as ConfigOptionsResponse })),
+    ])
+      .then(([statusResponse, optionResponse]) => {
+        if (cancelled) return;
+        if (statusResponse.response.ok) setStatuses(statusResponse.result.items || []);
+        if (optionResponse.response.ok) setConfiguredStores(optionResponse.result.stores.map((store) => store.label));
+      })
       .catch(() => undefined);
     return () => { cancelled = true; };
   }, []);
@@ -80,16 +76,11 @@ export function Dashboard() {
     const timer = window.setTimeout(() => void loadReturns(search, includeFinalized), 250);
     return () => window.clearTimeout(timer);
   }, [includeFinalized, loadReturns, search]);
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(''), 4500);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
-
   const visibleItems = useMemo(
-    () => (statusFilter ? items.filter((item) => item.status === statusFilter) : items),
-    [items, statusFilter],
+    () => items.filter((item) => (!statusFilter || item.status === statusFilter) && (!storeFilter || item.store === storeFilter)),
+    [items, statusFilter, storeFilter],
   );
+  const storeOptions = useMemo(() => [...new Set([...configuredStores, ...items.map((item) => item.store).filter((store): store is string => Boolean(store))])].sort((a, b) => a.localeCompare(b, 'pt-BR')), [configuredStores, items]);
   const metrics = useMemo(() => ({
     pending: items.filter((item) => item.status === 'PENDING_INFO').length,
     testing: items.filter((item) => item.status === 'WAITING_TEST').length,
@@ -97,11 +88,6 @@ export function Dashboard() {
     ready: items.filter((item) => item.status === 'READY').length,
   }), [items]);
   const firstPending = items.find((item) => item.status === 'PENDING_INFO');
-
-  function refresh(message?: string) {
-    void loadReturns(search, includeFinalized);
-    if (message) setNotice(message);
-  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -119,7 +105,7 @@ export function Dashboard() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" size="lg" className="hidden h-11 rounded-xl px-4 sm:inline-flex" disabled={!firstPending} onClick={() => firstPending && setDetailId(firstPending.id)}><ClipboardCheck /> Completar cadastro</Button>
+            <Button variant="outline" size="lg" className="hidden h-11 rounded-xl px-4 sm:inline-flex" disabled={!firstPending} onClick={() => firstPending && (window.location.href = `/devolucoes/${firstPending.id}`)}><ClipboardCheck /> Completar cadastro</Button>
             <Button size="lg" className="h-11 rounded-xl px-4 shadow-[0_8px_20px_rgb(13_96_83/18%)]" onClick={() => { window.location.href = '/receber'; }}><Camera /><span className="hidden sm:inline">Registrar recebimento</span><span className="sm:hidden">Registrar</span></Button>
           </div>
         </div>
@@ -130,10 +116,10 @@ export function Dashboard() {
           <nav aria-label="Navegação principal" className="space-y-1">
             <NavButton active={!includeFinalized} icon={<LayoutDashboard />} label="Pendências" count={items.filter((item) => item.status !== 'FINALIZED').length} onClick={() => { setIncludeFinalized(false); setStatusFilter(''); }} />
             <NavButton active={includeFinalized} icon={<Box />} label="Todas as devoluções" onClick={() => { setIncludeFinalized(true); setStatusFilter(''); }} />
-            <NavButton icon={<Store />} label="Lojas" onClick={() => setNotice('O filtro por loja já está disponível pela busca. O cadastro próprio de lojas entra na próxima etapa.')} />
+            <NavButton icon={<Store />} label="Lojas" onClick={() => (document.querySelector('select[aria-label="Filtrar por loja"]') as { focus?: () => void } | null)?.focus?.()} />
             <NavButton icon={<Settings />} label="Configurações" onClick={() => { window.location.href = '/configuracoes'; }} />
           </nav>
-          <div className="absolute inset-x-3 bottom-5 rounded-2xl border border-primary/15 bg-primary/[0.055] p-3.5"><p className="text-xs font-bold text-primary">Fluxo seguro</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Só é possível finalizar após classificar os itens e informar a nota de entrada.</p></div>
+          <div className="absolute inset-x-3 bottom-5 rounded-2xl border border-primary/15 bg-primary/[0.055] p-3.5"><p className="text-xs font-bold text-primary">Fluxo seguro</p><p className="mt-1 text-xs leading-5 text-muted-foreground">A nota só é exigida quando a condição dos produtos precisar de entrada.</p></div>
         </aside>
 
         <main className="min-w-0 px-4 pb-28 pt-6 sm:px-6 lg:px-8 lg:pb-10 lg:pt-8">
@@ -151,26 +137,32 @@ export function Dashboard() {
             </section>
 
             {statuses.length > 0 && (
-              <div className="mt-5 flex gap-2 overflow-x-auto pb-1">
-                <Button size="sm" variant={statusFilter ? 'outline' : 'secondary'} className="shrink-0" onClick={() => setStatusFilter('')}>Todas</Button>
-                {statuses.filter((status) => includeFinalized || status.code !== 'FINALIZED').map((status) => (
-                  <Button key={status.code} size="sm" variant={statusFilter === status.code ? 'secondary' : 'outline'} className="shrink-0" onClick={() => setStatusFilter(statusFilter === status.code ? '' : status.code)}>{status.label}</Button>
-                ))}
+              <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center">
+                <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
+                  <Button size="sm" variant={statusFilter ? 'outline' : 'secondary'} className="shrink-0" onClick={() => setStatusFilter('')}>Todos os status</Button>
+                  {statuses.filter((status) => includeFinalized || status.code !== 'FINALIZED').map((status) => (
+                    <Button key={status.code} size="sm" variant={statusFilter === status.code ? 'secondary' : 'outline'} className="shrink-0" onClick={() => setStatusFilter(statusFilter === status.code ? '' : status.code)}><span className="size-2 rounded-full" style={statusDotStyle(status.color)} />{status.label}</Button>
+                  ))}
+                </div>
+                <NativeSelect aria-label="Filtrar por loja" className="w-full lg:w-60" value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)}>
+                  <NativeSelectOption value="">Todas as lojas</NativeSelectOption>
+                  {storeOptions.map((store) => <NativeSelectOption key={store} value={store}>{store}</NativeSelectOption>)}
+                </NativeSelect>
               </div>
             )}
 
             <section className="mt-7">
-              <div className="mb-3 flex items-center justify-between"><div><h2 className="text-base font-bold tracking-tight">{statusFilter ? statuses.find((status) => status.code === statusFilter)?.label || 'Resultados' : search ? 'Resultados da busca' : 'Prioridade agora'}</h2><p className="text-xs text-muted-foreground">{visibleItems.length} {visibleItems.length === 1 ? 'devolução encontrada' : 'devoluções encontradas'}</p></div>{(statusFilter || search) && <Button variant="ghost" className="text-primary" onClick={() => { setStatusFilter(''); setSearch(''); }}>Limpar filtros <X /></Button>}</div>
+              <div className="mb-3 flex items-center justify-between"><div><h2 className="text-base font-bold tracking-tight">{statusFilter ? statuses.find((status) => status.code === statusFilter)?.label || 'Resultados' : search ? 'Resultados da busca' : storeFilter ? `Loja: ${storeFilter}` : 'Prioridade agora'}</h2><p className="text-xs text-muted-foreground">{visibleItems.length} {visibleItems.length === 1 ? 'devolução encontrada' : 'devoluções encontradas'}</p></div>{(statusFilter || storeFilter || search) && <Button variant="ghost" className="text-primary" onClick={() => { setStatusFilter(''); setStoreFilter(''); setSearch(''); }}>Limpar filtros <X /></Button>}</div>
 
               {error ? (
                 <Alert variant="destructive"><X /><AlertTitle>Não foi possível carregar</AlertTitle><AlertDescription>{error} <button className="font-semibold underline" onClick={() => loadReturns()}>Tentar novamente</button></AlertDescription></Alert>
               ) : loading ? (
                 <div className="grid min-h-56 place-items-center text-muted-foreground"><div className="text-center"><Loader2 className="mx-auto size-6 animate-spin" /><p className="mt-2 text-sm">Atualizando a fila...</p></div></div>
               ) : visibleItems.length === 0 ? (
-                <EmptyState hasFilters={Boolean(search || statusFilter)} onCreate={() => { window.location.href = '/receber'; }} onClear={() => { setSearch(''); setStatusFilter(''); }} />
+                <EmptyState hasFilters={Boolean(search || statusFilter || storeFilter)} onCreate={() => { window.location.href = '/receber'; }} onClear={() => { setSearch(''); setStatusFilter(''); setStoreFilter(''); }} />
               ) : (
                 <div className="grid gap-3 xl:grid-cols-3">
-                  {visibleItems.map((item) => <ReturnCard key={item.id} item={item} onOpen={() => setDetailId(item.id)} />)}
+                  {visibleItems.map((item) => <ReturnCard key={item.id} item={item} onOpen={() => { window.location.href = `/devolucoes/${item.id}`; }} />)}
                 </div>
               )}
             </section>
@@ -185,9 +177,6 @@ export function Dashboard() {
         <MobileNav icon={<Settings />} label="Mais" onClick={() => { window.location.href = '/configuracoes'; }} />
       </nav>
 
-      {notice && <output className="fixed bottom-24 left-1/2 z-50 w-[min(420px,calc(100%-2rem))] -translate-x-1/2 rounded-xl bg-foreground px-4 py-3 text-sm font-medium text-background shadow-xl lg:bottom-6">{notice}</output>}
-
-      <ReturnDetailSheet open={Boolean(detailId)} returnId={detailId} statuses={statuses} onOpenChange={(open) => !open && setDetailId(null)} onChanged={(item: ReturnDetail) => refresh(item.status === 'FINALIZED' ? `${item.protocol} finalizada.` : 'Alterações salvas.')} />
     </div>
   );
 }
@@ -204,7 +193,7 @@ function ReturnCard({ item, onOpen }: { item: ReturnSummary; onOpen: () => void 
               <img src={`/api/photos/${item.first_photo_id}`} alt="" className="h-full w-full object-cover" />
             ) : <Box className="size-5" />}
           </div>
-          <div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div><p className="font-bold">{item.protocol}</p><p className="mt-0.5 truncate text-xs text-muted-foreground">{item.store || 'Loja ainda não informada'}</p></div><Badge variant="outline" className={statusClasses[item.status_color] || statusClasses.slate}>{item.status_label}</Badge></div></div>
+          <div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div><p className="font-bold">{item.protocol}</p><p className="mt-0.5 truncate text-xs text-muted-foreground">{item.store || 'Loja ainda não informada'}</p></div><Badge variant="outline" className={statusClass(item.status_color)} style={statusStyle(item.status_color)}><span className="size-2 rounded-full" style={statusDotStyle(item.status_color)} />{item.status_label}</Badge></div></div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><p className="text-muted-foreground">Identificação</p><p className="mt-1 truncate font-semibold">{item.tracking_code || item.order_id || 'Dados pendentes'}</p></div><div><p className="text-muted-foreground">Itens e fotos</p><p className="mt-1 font-semibold">{item.item_count} {item.item_count === 1 ? 'item' : 'itens'} · {item.photo_count} {item.photo_count === 1 ? 'foto' : 'fotos'}</p></div></div>
         <div className="mt-4 flex items-center justify-between border-t pt-3"><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Clock3 className="size-3.5" /> {relativeDate(item.received_at)}</p><span className="flex items-center gap-1 text-xs font-semibold text-primary">Abrir <ArrowRight className="size-3.5" /></span></div>

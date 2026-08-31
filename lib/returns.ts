@@ -70,6 +70,24 @@ export type StatusDefinition = {
   active: number;
 };
 
+export type ConfigOption = {
+  code: string;
+  type: 'LOCATION' | 'STORE' | 'CONDITION';
+  label: string;
+  color: string;
+  is_system: number;
+  sort_order: number;
+  active: number;
+  requires_invoice: number;
+  requires_notes: number;
+};
+
+export type ConfigOptionsResponse = {
+  locations: ConfigOption[];
+  stores: ConfigOption[];
+  conditions: ConfigOption[];
+};
+
 export type ReturnSummary = {
   id: string;
   protocol: string;
@@ -140,7 +158,7 @@ export function getBlockingReasons(returnData: {
     condition_notes?: string | null;
     destination?: string | null;
   }>;
-}) {
+}, invoiceExemptConditionCodes: string[] = ['DEFECTIVE'], noteRequiredConditionCodes: string[] = ['DEFECTIVE', 'DAMAGED', 'INCOMPLETE', 'OTHER']) {
   const reasons: string[] = [];
   if (!returnData.store?.trim()) reasons.push('Informe a loja de origem.');
   if (!returnData.received_at?.trim()) reasons.push('Informe a data de recebimento.');
@@ -153,11 +171,13 @@ export function getBlockingReasons(returnData: {
     if (!item.quantity || item.quantity < 1) reasons.push(`${name}: informe uma quantidade válida.`);
     if (!item.condition?.trim()) reasons.push(`${name}: defina a condição.`);
     if (!item.destination?.trim()) reasons.push(`${name}: defina o destino.`);
-    if (['DEFECTIVE', 'DAMAGED', 'INCOMPLETE', 'OTHER'].includes(item.condition || '') && !item.condition_notes?.trim()) {
+    if (noteRequiredConditionCodes.includes(item.condition || '') && !item.condition_notes?.trim()) {
       reasons.push(`${name}: descreva as condições encontradas.`);
     }
   });
-  if (!returnData.invoice_number?.trim()) reasons.push('Informe a nota de entrada.');
+  const classifiedItems = returnData.items?.filter((item) => item.condition?.trim()) || [];
+  const allProductsExemptFromInvoice = classifiedItems.length > 0 && classifiedItems.every((item) => invoiceExemptConditionCodes.includes(item.condition || ''));
+  if (!allProductsExemptFromInvoice && !returnData.invoice_number?.trim()) reasons.push('Informe a nota de entrada.');
   if (returnData.status === 'WAITING_TEST') reasons.push('Conclua o teste antes de finalizar.');
   return [...new Set(reasons)];
 }

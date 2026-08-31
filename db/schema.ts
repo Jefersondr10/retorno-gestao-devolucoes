@@ -13,6 +13,26 @@ export const statusDefinitions = sqliteTable('status_definitions', {
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
 });
 
+export const configOptions = sqliteTable(
+  'config_options',
+  {
+    code: text('code').primaryKey(),
+    type: text('type').notNull(),
+    label: text('label').notNull(),
+    color: text('color').notNull().default('#64748b'),
+    isSystem: integer('is_system', { mode: 'boolean' }).notNull().default(false),
+    sortOrder: integer('sort_order').notNull().default(100),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+    requiresInvoice: integer('requires_invoice', { mode: 'boolean' }).notNull().default(true),
+    requiresNotes: integer('requires_notes', { mode: 'boolean' }).notNull().default(false),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_config_options_type_label').on(table.type, table.label),
+    index('idx_config_options_type_active').on(table.type, table.active, table.sortOrder),
+  ],
+);
+
 export const returns = sqliteTable(
   'returns',
   {

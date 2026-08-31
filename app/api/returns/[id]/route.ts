@@ -41,6 +41,10 @@ export async function PATCH(request: Request, context: RouteContext) {
       .first();
     if (!statusDefinition) return apiError('Selecione um status válido.', 422);
 
+    const conditionPolicies = await db
+      .prepare("SELECT code, requires_invoice, requires_notes FROM config_options WHERE type = 'CONDITION' AND active = 1")
+      .all<{ code: string; requires_invoice: number; requires_notes: number }>();
+
     let nextStatus = data.status;
     const preliminaryReasons = getBlockingReasons({
       store: data.store,
@@ -56,7 +60,9 @@ export async function PATCH(request: Request, context: RouteContext) {
         condition_notes: item.conditionNotes,
         destination: item.destination,
       })),
-    });
+    },
+    conditionPolicies.results.filter((condition) => condition.requires_invoice === 0).map((condition) => condition.code),
+    conditionPolicies.results.filter((condition) => condition.requires_notes === 1).map((condition) => condition.code));
     if (data.status === 'WAITING_ENTRY' && preliminaryReasons.length === 0) nextStatus = 'READY';
 
     const actor = actorFrom(request);
