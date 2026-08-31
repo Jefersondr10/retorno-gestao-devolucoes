@@ -68,6 +68,7 @@ export type StatusDefinition = {
   is_system: number;
   sort_order: number;
   active: number;
+  usage_count?: number;
 };
 
 export type ConfigOption = {
@@ -80,6 +81,19 @@ export type ConfigOption = {
   active: number;
   requires_invoice: number;
   requires_notes: number;
+  usage_count?: number;
+};
+
+export type RetentionOverview = {
+  automaticEnabled: boolean;
+  photoRetentionDays: number;
+  returnRetentionDays: number;
+  lastCleanupAt: string | null;
+  lastCleanupPhotos: number;
+  lastCleanupReturns: number;
+  eligiblePhotos: number;
+  eligiblePhotoBytes: number;
+  eligibleReturns: number;
 };
 
 export type ConfigOptionsResponse = {

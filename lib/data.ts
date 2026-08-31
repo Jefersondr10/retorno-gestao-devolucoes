@@ -24,6 +24,11 @@ const statements = [
     requires_notes INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS returns (
     id TEXT PRIMARY KEY,
     protocol TEXT NOT NULL UNIQUE,
@@ -76,6 +81,7 @@ const statements = [
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_returns_protocol ON returns(protocol)`,
   `CREATE INDEX IF NOT EXISTS idx_returns_status_received ON returns(status, received_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_returns_status_finalized ON returns(status, finalized_at)`,
   `CREATE INDEX IF NOT EXISTS idx_returns_tracking ON returns(tracking_code)`,
   `CREATE INDEX IF NOT EXISTS idx_returns_order ON returns(order_id)`,
   `CREATE INDEX IF NOT EXISTS idx_return_items_return_id ON return_items(return_id)`,
@@ -103,6 +109,15 @@ const defaultConfigOptions = [
   ['DAMAGED', 'CONDITION', 'Avariado', '#ea580c', 1, 40, 1, 1],
   ['INCOMPLETE', 'CONDITION', 'Incompleto', '#ca8a04', 1, 50, 1, 1],
   ['OTHER', 'CONDITION', 'Outro', '#64748b', 1, 60, 1, 1],
+] as const;
+
+const defaultSystemSettings = [
+  ['automatic_cleanup_enabled', '0'],
+  ['photo_retention_days', '90'],
+  ['return_retention_days', '365'],
+  ['last_cleanup_at', ''],
+  ['last_cleanup_photos', '0'],
+  ['last_cleanup_returns', '0'],
 ] as const;
 
 let schemaPromise: Promise<void> | null = null;
@@ -138,6 +153,13 @@ export async function ensureSchema() {
                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
             )
             .bind(code, type, label, color, isSystem, order, requiresInvoice, requiresNotes, new Date().toISOString()),
+        ),
+      );
+      await db.batch(
+        defaultSystemSettings.map(([key, value]) =>
+          db
+            .prepare('INSERT OR IGNORE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)')
+            .bind(key, value, new Date().toISOString()),
         ),
       );
       await db.prepare('PRAGMA optimize').run();

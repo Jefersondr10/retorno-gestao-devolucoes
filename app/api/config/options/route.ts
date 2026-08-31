@@ -5,14 +5,22 @@ export const dynamic = 'force-dynamic';
 const allowedTypes = ['LOCATION', 'STORE', 'CONDITION'] as const;
 type OptionType = (typeof allowedTypes)[number];
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     await ensureSchema();
     const { db } = getBindings();
+    const includeInactive = new URL(request.url).searchParams.get('includeInactive') === 'true';
     const result = await db
       .prepare(
-        `SELECT code, type, label, color, is_system, sort_order, active, requires_invoice, requires_notes
-         FROM config_options WHERE active = 1 ORDER BY type, sort_order, label`,
+        `SELECT o.code, o.type, o.label, o.color, o.is_system, o.sort_order, o.active, o.requires_invoice, o.requires_notes,
+          CASE o.type
+            WHEN 'STORE' THEN (SELECT COUNT(*) FROM returns r WHERE r.store = o.label)
+            WHEN 'LOCATION' THEN (SELECT COUNT(*) FROM returns r WHERE r.received_location = o.label)
+            WHEN 'CONDITION' THEN (SELECT COUNT(*) FROM return_items i WHERE i.condition = o.code)
+            ELSE 0
+          END AS usage_count
+         FROM config_options o ${includeInactive ? '' : 'WHERE o.active = 1'}
+         ORDER BY o.type, o.active DESC, o.sort_order, o.label`,
       )
       .all<Record<string, unknown>>();
     const rows = result.results;

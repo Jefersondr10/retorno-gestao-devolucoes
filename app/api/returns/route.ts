@@ -1,11 +1,13 @@
 import { actorFrom, apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
 import { createReturnSchema } from '@/lib/returns';
+import { runRetentionCleanup } from '@/lib/retention';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   try {
     await ensureSchema();
+    await runRetentionCleanup().catch((cleanupError) => console.error('Automatic retention cleanup failed', cleanupError));
     const { db } = getBindings();
     const url = new URL(request.url);
     const query = url.searchParams.get('q')?.trim().toLowerCase() || '';
@@ -104,7 +106,7 @@ export async function POST(request: Request) {
     if (photos.length > 8) return apiError('Envie no máximo 8 fotos por vez.', 422);
     for (const photo of photos) {
       if (!photo.type.startsWith('image/')) return apiError('Envie somente arquivos de imagem.', 422);
-      if (photo.size > 10 * 1024 * 1024) return apiError('Cada foto deve ter no máximo 10 MB.', 422);
+      if (photo.size > 2.5 * 1024 * 1024) return apiError('Cada foto deve ter no máximo 2,5 MB.', 422);
     }
 
     const duplicateParts: string[] = [];

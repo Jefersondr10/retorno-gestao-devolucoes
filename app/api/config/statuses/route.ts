@@ -2,12 +2,17 @@ import { actorFrom, apiError, ensureSchema, getBindings } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     await ensureSchema();
     const { db } = getBindings();
+    const includeInactive = new URL(request.url).searchParams.get('includeInactive') === 'true';
     const result = await db
-      .prepare('SELECT code, label, color, is_system, sort_order, active FROM status_definitions WHERE active = 1 ORDER BY sort_order, label')
+      .prepare(`SELECT s.code, s.label, s.color, s.is_system, s.sort_order, s.active,
+        (SELECT COUNT(*) FROM returns r WHERE r.status = s.code) AS usage_count
+        FROM status_definitions s
+        ${includeInactive ? '' : 'WHERE s.active = 1'}
+        ORDER BY s.active DESC, s.sort_order, s.label`)
       .all();
     return Response.json({ items: result.results });
   } catch (error) {

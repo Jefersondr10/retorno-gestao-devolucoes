@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
+import { MAX_PHOTO_BYTES, normalizeImageFile } from '@/lib/client-images';
 import type { ConfigOptionsResponse, ReturnDetail } from '@/lib/returns';
 
 type ReceiptFields = {
@@ -63,6 +64,7 @@ export function MobileReceiptPage() {
   const [fields, setFields] = useState<ReceiptFields>(defaultFields);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [preparingPhotos, setPreparingPhotos] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState<{
     item: ReturnDetail;
@@ -108,29 +110,34 @@ export function MobileReceiptPage() {
     setFields((current) => ({ ...current, [name]: value }));
   }
 
-  function addPhotos(fileList: FileList | null) {
+  async function addPhotos(fileList: FileList | null) {
     if (!fileList) return;
-    const incoming = Array.from(fileList);
-    const invalidType = incoming.some((file) => !file.type.startsWith('image/'));
-    const tooLarge = incoming.some((file) => file.size > 10 * 1024 * 1024);
-    if (invalidType) {
-      setError('Escolha somente arquivos de imagem.');
+    const available = Math.max(0, 8 - photos.length);
+    const incoming = Array.from(fileList).slice(0, available);
+    if (!incoming.length) {
+      setError('É possível registrar até 8 fotos por devolução.');
       return;
     }
-    if (tooLarge) {
-      setError('Cada foto deve ter no máximo 10 MB. Tente reduzir a qualidade da imagem.');
-      return;
+    const prepared: File[] = [];
+    const failures: string[] = [];
+    try {
+      for (let index = 0; index < incoming.length; index += 1) {
+        setPreparingPhotos(`Otimizando foto ${index + 1} de ${incoming.length}…`);
+        try {
+          prepared.push(await normalizeImageFile(incoming[index]));
+        } catch (photoError) {
+          failures.push(photoError instanceof Error ? photoError.message : `${incoming[index].name}: não foi possível preparar.`);
+        }
+      }
+      setPhotos((current) => [...current, ...prepared].slice(0, 8));
+      setError(failures.join(' '));
+    } finally {
+      setPreparingPhotos('');
     }
-    setPhotos((current) => {
-      const available = Math.max(0, 8 - current.length);
-      if (incoming.length > available) setError('É possível registrar até 8 fotos por devolução.');
-      else setError('');
-      return [...current, ...incoming.slice(0, available)];
-    });
   }
 
   function addCapturedPhoto(file: File) {
-    if (!file.type.startsWith('image/') || file.size > 10 * 1024 * 1024) {
+    if (!file.type.startsWith('image/') || file.size > MAX_PHOTO_BYTES) {
       setError('A foto capturada não pôde ser adicionada. Use a câmera do aparelho como alternativa.');
       return;
     }
@@ -269,7 +276,7 @@ export function MobileReceiptPage() {
 
           <section className="grid gap-3 sm:grid-cols-2" aria-label="Adicionar fotos">
             <ContinuousCamera
-              disabled={photos.length >= 8 || submitting}
+              disabled={photos.length >= 8 || submitting || Boolean(preparingPhotos)}
               photoCount={photos.length}
               previews={previews}
               onCapture={addCapturedPhoto}
@@ -278,14 +285,14 @@ export function MobileReceiptPage() {
             <button
               type="button"
               onClick={() => galleryInput.current?.click()}
-              disabled={photos.length >= 8 || submitting}
+              disabled={photos.length >= 8 || submitting || Boolean(preparingPhotos)}
               className="flex min-h-28 flex-col items-center justify-center rounded-3xl border-2 border-dashed border-primary/25 bg-card px-5 py-5 text-center outline-none transition hover:border-primary/50 hover:bg-primary/[0.035] focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 sm:min-h-36"
             >
               <span className="grid size-11 place-items-center rounded-2xl bg-primary/10 text-primary"><ImagePlus className="size-5" /></span>
-              <span className="mt-3 text-sm font-bold">Escolher da galeria</span>
-              <span className="mt-1 text-xs text-muted-foreground">Selecionar várias fotos</span>
+              <span className="mt-3 text-sm font-bold">{preparingPhotos || 'Escolher da galeria'}</span>
+              <span className="mt-1 text-xs text-muted-foreground">Qualidade otimizada para ampliar no computador</span>
             </button>
-            <button type="button" className="min-h-11 rounded-xl text-sm font-semibold text-primary underline-offset-4 hover:underline sm:col-span-2" onClick={() => cameraInput.current?.click()} disabled={photos.length >= 8 || submitting}>
+            <button type="button" className="min-h-11 rounded-xl text-sm font-semibold text-primary underline-offset-4 hover:underline sm:col-span-2" onClick={() => cameraInput.current?.click()} disabled={photos.length >= 8 || submitting || Boolean(preparingPhotos)}>
               Usar a câmera do aparelho em vez da câmera contínua
             </button>
             <input
@@ -294,7 +301,7 @@ export function MobileReceiptPage() {
               type="file"
               accept="image/*"
               capture="environment"
-              onChange={(event) => { addPhotos(event.target.files); event.target.value = ''; }}
+              onChange={(event) => { void addPhotos(event.target.files); event.target.value = ''; }}
               aria-label="Tirar uma foto com a câmera traseira"
             />
             <input
@@ -303,7 +310,7 @@ export function MobileReceiptPage() {
               type="file"
               accept="image/*"
               multiple
-              onChange={(event) => { addPhotos(event.target.files); event.target.value = ''; }}
+              onChange={(event) => { void addPhotos(event.target.files); event.target.value = ''; }}
               aria-label="Escolher fotos da galeria"
             />
           </section>
@@ -415,8 +422,8 @@ export function MobileReceiptPage() {
 
         <footer className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t bg-card/96 px-4 pt-3 shadow-[0_-12px_35px_rgb(28_39_36/8%)] backdrop-blur-xl sm:px-6">
           <div className="mx-auto max-w-3xl">
-            <Button type="submit" className="h-13 w-full rounded-xl text-[15px] font-bold shadow-[0_10px_24px_rgb(13_96_83/20%)]" disabled={submitting || photos.length === 0}>
-              {submitting ? <><Loader2 className="animate-spin" /> Enviando {photos.length} {photos.length === 1 ? 'foto' : 'fotos'}...</> : <><CheckCircle2 /> Registrar com {photos.length} {photos.length === 1 ? 'foto' : 'fotos'}</>}
+            <Button type="submit" className="h-13 w-full rounded-xl text-[15px] font-bold shadow-[0_10px_24px_rgb(13_96_83/20%)]" disabled={submitting || Boolean(preparingPhotos) || photos.length === 0}>
+              {submitting ? <><Loader2 className="animate-spin" /> Enviando {photos.length} {photos.length === 1 ? 'foto' : 'fotos'}...</> : preparingPhotos ? <><Loader2 className="animate-spin" /> {preparingPhotos}</> : <><CheckCircle2 /> Registrar com {photos.length} {photos.length === 1 ? 'foto' : 'fotos'}</>}
             </Button>
             <p className="mt-2 text-center text-[11px] text-muted-foreground" aria-live="polite">
               {submitting ? 'Não feche esta tela enquanto as fotos são enviadas.' : 'Pedido, rastreio e produto podem ser preenchidos depois.'}

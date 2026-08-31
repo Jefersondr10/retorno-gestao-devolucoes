@@ -33,6 +33,12 @@ export const configOptions = sqliteTable(
   ],
 );
 
+export const systemSettings = sqliteTable('system_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
 export const returns = sqliteTable(
   'returns',
   {
@@ -58,6 +64,7 @@ export const returns = sqliteTable(
   (table) => [
     uniqueIndex('idx_returns_protocol').on(table.protocol),
     index('idx_returns_status_received').on(table.status, table.receivedAt),
+    index('idx_returns_status_finalized').on(table.status, table.finalizedAt),
     index('idx_returns_tracking').on(table.trackingCode),
     index('idx_returns_order').on(table.orderId),
   ],

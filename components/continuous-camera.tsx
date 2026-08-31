@@ -5,6 +5,7 @@ import { Camera, Check, Loader2, X } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { canvasToOptimizedPhoto, PHOTO_LONG_EDGE } from '@/lib/client-images';
 
 export function ContinuousCamera({
   disabled,
@@ -79,8 +80,8 @@ export function ContinuousCamera({
           audio: false,
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            width: { ideal: 2560 },
+            height: { ideal: 1920 },
           },
         });
       } catch (cameraError) {
@@ -111,12 +112,11 @@ export function ContinuousCamera({
     setError('');
   }
 
-  function capturePhoto() {
+  async function capturePhoto() {
     const video = videoRef.current;
     if (!video || !ready || video.videoWidth === 0 || photoCount >= 8) return;
     setCapturing(true);
-    const maxWidth = 1920;
-    const ratio = Math.min(1, maxWidth / video.videoWidth);
+    const ratio = Math.min(1, PHOTO_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(video.videoWidth * ratio));
     canvas.height = Math.max(1, Math.round(video.videoHeight * ratio));
@@ -126,19 +126,20 @@ export function ContinuousCamera({
       setError('Não foi possível registrar esta foto. Tente novamente.');
       return;
     }
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob((blob) => {
-      setCapturing(false);
-      if (!blob) {
-        setError('Não foi possível registrar esta foto. Tente novamente.');
-        return;
-      }
+    try {
+      const file = await canvasToOptimizedPhoto(canvas);
       const nextNumber = photoCount + 1;
-      const file = new File([blob], `foto-${Date.now()}.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
       onCapture(file);
       setAnnouncement(`Foto ${nextNumber} adicionada.`);
       if ('vibrate' in navigator) navigator.vibrate?.(40);
-    }, 'image/jpeg', 0.88);
+    } catch (captureError) {
+      setError(captureError instanceof Error ? captureError.message : 'Não foi possível registrar esta foto. Tente novamente.');
+    } finally {
+      setCapturing(false);
+    }
   }
 
   return (

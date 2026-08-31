@@ -36,5 +36,9 @@ export function statusStyle(color: string): CSSProperties | undefined {
 }
 
 export function statusDotStyle(color: string): CSSProperties {
-  return { backgroundColor: /^#[0-9a-f]{6}$/i.test(color) ? color : namedHex[color] || namedHex.slate };
+  return { backgroundColor: statusHex(color) };
+}
+
+export function statusHex(color: string) {
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : namedHex[color] || namedHex.slate;
 }

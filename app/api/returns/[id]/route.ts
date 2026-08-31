@@ -36,8 +36,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     const { db } = getBindings();
     const statusDefinition = await db
-      .prepare('SELECT code FROM status_definitions WHERE code = ? AND active = 1')
-      .bind(data.status)
+      .prepare('SELECT code FROM status_definitions WHERE code = ? AND (active = 1 OR code = ?)')
+      .bind(data.status, current.status)
       .first();
     if (!statusDefinition) return apiError('Selecione um status válido.', 422);
 
@@ -137,5 +137,43 @@ export async function PATCH(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(error);
     return apiError('Não foi possível salvar as alterações.', 500);
+  }
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  try {
+    await ensureSchema();
+    const { id } = await context.params;
+    const current = await getReturnDetail(id);
+    if (!current) return apiError('Devolução não encontrada.', 404);
+    if (current.status !== 'FINALIZED') {
+      return apiError('Somente devoluções finalizadas podem ser excluídas.', 409);
+    }
+    const body = (await request.json().catch(() => ({}))) as { confirmProtocol?: string };
+    if (body.confirmProtocol !== current.protocol) {
+      return apiError('Confirme o protocolo para excluir esta devolução.', 422);
+    }
+
+    const { db, files } = getBindings();
+    const photos = await db
+      .prepare('SELECT object_key FROM return_photos WHERE return_id = ?')
+      .bind(id)
+      .all<{ object_key: string }>();
+    if (photos.results.length) await files.delete(photos.results.map((photo) => photo.object_key));
+
+    const now = new Date().toISOString();
+    await db.batch([
+      db
+        .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'RETURN_DELETED', ?, ?)")
+        .bind(crypto.randomUUID(), actorFrom(request), JSON.stringify({ protocol: current.protocol, photoCount: photos.results.length }), now),
+      db.prepare('DELETE FROM audit_events WHERE return_id = ?').bind(id),
+      db.prepare('DELETE FROM return_items WHERE return_id = ?').bind(id),
+      db.prepare('DELETE FROM return_photos WHERE return_id = ?').bind(id),
+      db.prepare('DELETE FROM returns WHERE id = ?').bind(id),
+    ]);
+    return Response.json({ deleted: true, protocol: current.protocol });
+  } catch (error) {
+    console.error(error);
+    return apiError('Não foi possível excluir a devolução.', 500);
   }
 }

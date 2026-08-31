@@ -15,6 +15,13 @@
       "when": 1788146261123,
       "tag": "0001_yielding_starfox",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788150585485,
+      "tag": "0002_orange_william_stryker",
+      "breakpoints": true
     }
   ]
 }
