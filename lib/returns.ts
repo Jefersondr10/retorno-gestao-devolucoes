@@ -113,6 +113,7 @@ export type ReturnSummary = {
   status: string;
   status_label: string;
   status_color: string;
+  store_color: string;
   notes: string | null;
   source: 'PHOTO' | 'MANUAL';
   invoice_number: string | null;

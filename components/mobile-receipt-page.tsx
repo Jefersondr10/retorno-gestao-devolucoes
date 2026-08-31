@@ -218,7 +218,7 @@ export function MobileReceiptPage() {
             <CheckCircle2 className="size-8" />
           </div>
           <p className="mt-5 text-sm font-semibold text-primary">Recebimento concluído</p>
-          <h1 className="mt-1 text-2xl font-extrabold tracking-tight">{success.item.protocol} registrada</h1>
+          <h1 className="display-title mt-1 text-2xl">{success.item.protocol} registrada</h1>
           <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
             As {success.item.photo_count} {success.item.photo_count === 1 ? 'foto foi enviada' : 'fotos foram enviadas'} e a devolução já está disponível para triagem no computador.
           </p>
@@ -247,7 +247,7 @@ export function MobileReceiptPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-background text-foreground">
+    <div className="app-shell min-h-[100dvh] text-foreground">
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-3xl items-center gap-3 px-4 sm:px-6">
           <Link href="/" className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às pendências">
@@ -268,7 +268,7 @@ export function MobileReceiptPage() {
         <div className="space-y-5 px-4 py-6 sm:px-6 sm:py-8">
           <section>
             <p className="text-sm font-semibold text-primary">Passo principal</p>
-            <h2 className="mt-1 text-2xl font-extrabold tracking-[-0.035em]">Fotografe a devolução</h2>
+            <h2 className="display-title mt-1 text-2xl">Fotografe a devolução</h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
               Fotografe a etiqueta, a embalagem e o produto. Os outros dados podem ser completados depois no computador.
             </p>

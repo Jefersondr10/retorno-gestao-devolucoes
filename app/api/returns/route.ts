@@ -42,11 +42,13 @@ export async function GET(request: Request) {
     const statement = db.prepare(
       `SELECT r.*, COALESCE(s.label, r.status) AS status_label,
         COALESCE(s.color, 'slate') AS status_color,
+        COALESCE(store_option.color, '#64748b') AS store_color,
         (SELECT COUNT(*) FROM return_items i WHERE i.return_id = r.id) AS item_count,
         (SELECT COUNT(*) FROM return_photos p WHERE p.return_id = r.id) AS photo_count,
         (SELECT p.id FROM return_photos p WHERE p.return_id = r.id ORDER BY p.created_at LIMIT 1) AS first_photo_id
        FROM returns r
        LEFT JOIN status_definitions s ON s.code = r.status
+       LEFT JOIN config_options store_option ON store_option.type = 'STORE' AND store_option.label = r.store
        ${where}
        ORDER BY CASE r.status
           WHEN 'PENDING_INFO' THEN 1

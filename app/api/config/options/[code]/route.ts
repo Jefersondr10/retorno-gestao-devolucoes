@@ -30,10 +30,16 @@ export async function PATCH(request: Request, context: RouteContext) {
     const { db } = getBindings();
     const current = await db.prepare('SELECT * FROM config_options WHERE code = ?').bind(code).first<OptionRecord>();
     if (!current) return apiError('Cadastro não encontrado.', 404);
-    const body = (await request.json()) as { label?: string; active?: boolean };
+    const body = (await request.json()) as { label?: string; color?: string; active?: boolean };
     const label = body.label?.trim() || current.label;
+    const color = body.color === undefined
+      ? current.color
+      : /^#[0-9a-f]{6}$/i.test(body.color.trim())
+        ? body.color.trim().toLowerCase()
+        : '';
     const active = body.active === undefined ? current.active : body.active ? 1 : 0;
     if (!label || label.length > 120) return apiError('Informe um nome com até 120 caracteres.', 422);
+    if (!color) return apiError('Selecione uma cor válida.', 422);
     const duplicate = await db
       .prepare('SELECT code FROM config_options WHERE type = ? AND LOWER(label) = LOWER(?) AND code != ? LIMIT 1')
       .bind(current.type, label, code)
@@ -41,7 +47,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (duplicate) return apiError('Já existe um cadastro com este nome.', 409);
 
     const operations: D1PreparedStatement[] = [
-      db.prepare('UPDATE config_options SET label = ?, active = ? WHERE code = ?').bind(label, active, code),
+      db.prepare('UPDATE config_options SET label = ?, color = ?, active = ? WHERE code = ?').bind(label, color, active, code),
     ];
     if (label !== current.label && current.type === 'STORE') operations.push(db.prepare('UPDATE returns SET store = ? WHERE store = ?').bind(label, current.label));
     if (label !== current.label && current.type === 'LOCATION') operations.push(db.prepare('UPDATE returns SET received_location = ? WHERE received_location = ?').bind(label, current.label));
@@ -49,10 +55,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     operations.push(
       db
         .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'CONFIG_OPTION_UPDATED', ?, ?)")
-        .bind(crypto.randomUUID(), actorFrom(request), JSON.stringify({ code, previous: current, next: { label, active } }), now),
+        .bind(crypto.randomUUID(), actorFrom(request), JSON.stringify({ code, previous: current, next: { label, color, active } }), now),
     );
     await db.batch(operations);
-    return Response.json({ item: { ...current, label, active, usage_count: await usageCount({ ...current, label, active }) } });
+    return Response.json({ item: { ...current, label, color, active, usage_count: await usageCount({ ...current, label, color, active }) } });
   } catch (error) {
     console.error(error);
     return apiError('Não foi possível atualizar o cadastro.', 500);
