@@ -7,11 +7,13 @@ import {
   Box,
   Camera,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   Clock3,
   FileText,
   Inbox,
   LayoutDashboard,
+  ListFilter,
   Loader2,
   PackageCheck,
   Search,
@@ -26,9 +28,11 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover';
 import { ReturnWorkspace } from '@/components/return-workspace';
 import type { ConfigOptionsResponse, ReturnSummary, StatusDefinition } from '@/lib/returns';
 import { statusClass, statusDotStyle, statusStyle } from '@/lib/status-colors';
@@ -39,7 +43,7 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [storeFilter, setStoreFilter] = useState('');
   const [configuredStores, setConfiguredStores] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'pending' | 'finalized'>('pending');
@@ -85,8 +89,8 @@ export function Dashboard() {
   }, [loadReturns, search, viewMode]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(''), 4000); return () => window.clearTimeout(timer); }, [notice]);
   const visibleItems = useMemo(
-    () => items.filter((item) => (!statusFilter || item.status === statusFilter) && (!storeFilter || item.store === storeFilter)),
-    [items, statusFilter, storeFilter],
+    () => items.filter((item) => (statusFilters.length === 0 || statusFilters.includes(item.status)) && (!storeFilter || item.store === storeFilter)),
+    [items, statusFilters, storeFilter],
   );
   const storeOptions = useMemo(() => [...new Set([...configuredStores, ...items.map((item) => item.store).filter((store): store is string => Boolean(store))])].sort((a, b) => a.localeCompare(b, 'pt-BR')), [configuredStores, items]);
   const metrics = useMemo(() => ({
@@ -99,8 +103,12 @@ export function Dashboard() {
 
   function changeView(nextView: 'pending' | 'finalized') {
     setViewMode(nextView);
-    setStatusFilter('');
+    setStatusFilters([]);
     setStoreFilter('');
+  }
+
+  function toggleStatusFilter(code: string) {
+    setStatusFilters((current) => current.includes(code) ? current.filter((statusCode) => statusCode !== code) : [...current, code]);
   }
 
   async function deleteReturn(item: ReturnSummary) {
@@ -156,34 +164,55 @@ export function Dashboard() {
             </div>
 
             {viewMode === 'pending' && <section aria-label="Resumo das pendências" className="mt-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
-              <Metric icon={<Camera />} label="Novas por foto" value={metrics.pending} accent="bg-amber-100 text-amber-800" active={statusFilter === 'PENDING_INFO'} onClick={() => setStatusFilter(statusFilter === 'PENDING_INFO' ? '' : 'PENDING_INFO')} />
-              <Metric icon={<TestTube2 />} label="Aguardando teste" value={metrics.testing} accent="bg-sky-100 text-sky-800" active={statusFilter === 'WAITING_TEST'} onClick={() => setStatusFilter(statusFilter === 'WAITING_TEST' ? '' : 'WAITING_TEST')} />
-              <Metric icon={<FileText />} label="Aguardando nota" value={metrics.entry} accent="bg-violet-100 text-violet-800" active={statusFilter === 'WAITING_ENTRY'} onClick={() => setStatusFilter(statusFilter === 'WAITING_ENTRY' ? '' : 'WAITING_ENTRY')} />
-              <Metric icon={<CheckCircle2 />} label="Prontas para finalizar" value={metrics.ready} accent="bg-emerald-100 text-emerald-800" active={statusFilter === 'READY'} onClick={() => setStatusFilter(statusFilter === 'READY' ? '' : 'READY')} extraClass="col-span-2 xl:col-span-1" />
+              <Metric icon={<Camera />} label="Novas por foto" value={metrics.pending} accent="bg-amber-100 text-amber-800" active={statusFilters.includes('PENDING_INFO')} onClick={() => toggleStatusFilter('PENDING_INFO')} />
+              <Metric icon={<TestTube2 />} label="Aguardando teste" value={metrics.testing} accent="bg-sky-100 text-sky-800" active={statusFilters.includes('WAITING_TEST')} onClick={() => toggleStatusFilter('WAITING_TEST')} />
+              <Metric icon={<FileText />} label="Aguardando nota" value={metrics.entry} accent="bg-violet-100 text-violet-800" active={statusFilters.includes('WAITING_ENTRY')} onClick={() => toggleStatusFilter('WAITING_ENTRY')} />
+              <Metric icon={<CheckCircle2 />} label="Prontas para finalizar" value={metrics.ready} accent="bg-emerald-100 text-emerald-800" active={statusFilters.includes('READY')} onClick={() => toggleStatusFilter('READY')} extraClass="col-span-2 xl:col-span-1" />
             </section>}
 
-            {statuses.length > 0 && (
-              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:max-w-xl">
-                {viewMode === 'pending' && <NativeSelect aria-label="Filtrar por status" className="w-full" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                  <NativeSelectOption value="">Todos os status em andamento</NativeSelectOption>
-                  {statuses.filter((status) => status.code !== 'FINALIZED').map((status) => <NativeSelectOption key={status.code} value={status.code}>{status.label}</NativeSelectOption>)}
-                </NativeSelect>}
-                <NativeSelect aria-label="Filtrar por loja" className="w-full lg:w-60" value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)}>
-                  <NativeSelectOption value="">Todas as lojas</NativeSelectOption>
-                  {storeOptions.map((store) => <NativeSelectOption key={store} value={store}>{store}</NativeSelectOption>)}
-                </NativeSelect>
+            <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-start">
+              {viewMode === 'pending' && statuses.length > 0 && (
+                <StatusMultiSelect
+                  statuses={statuses.filter((status) => status.code !== 'FINALIZED')}
+                  selected={statusFilters}
+                  onChange={setStatusFilters}
+                />
+              )}
+              <NativeSelect aria-label="Filtrar por loja" className="h-11 w-full lg:w-60" value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)}>
+                <NativeSelectOption value="">Todas as lojas</NativeSelectOption>
+                {storeOptions.map((store) => <NativeSelectOption key={store} value={store}>{store}</NativeSelectOption>)}
+              </NativeSelect>
+            </div>
+
+            {viewMode === 'pending' && statusFilters.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="Status selecionados">
+                {statuses.filter((status) => statusFilters.includes(status.code)).map((status) => (
+                  <button
+                    key={status.code}
+                    type="button"
+                    className={`inline-flex min-h-8 items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition hover:opacity-75 ${statusClass(status.color)}`}
+                    style={statusStyle(status.color)}
+                    onClick={() => toggleStatusFilter(status.code)}
+                    aria-label={`Remover filtro ${status.label}`}
+                  >
+                    <span className="size-2 rounded-full" style={statusDotStyle(status.color)} />
+                    {status.label}
+                    <X className="size-3" />
+                  </button>
+                ))}
+                <Button type="button" variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground" onClick={() => setStatusFilters([])}>Limpar status</Button>
               </div>
             )}
 
             <section className="mt-7">
-              <div className="mb-3 flex items-center justify-between"><div><h2 className="text-base font-bold tracking-tight">{viewMode === 'finalized' ? 'Histórico finalizado' : statusFilter ? statuses.find((status) => status.code === statusFilter)?.label || 'Resultados' : search ? 'Resultados da busca' : storeFilter ? `Loja: ${storeFilter}` : 'Prioridade agora'}</h2><p className="text-xs text-muted-foreground">{visibleItems.length} {visibleItems.length === 1 ? 'devolução encontrada' : 'devoluções encontradas'}</p></div>{(statusFilter || storeFilter || search) && <Button variant="ghost" className="text-primary" onClick={() => { setStatusFilter(''); setStoreFilter(''); setSearch(''); }}>Limpar filtros <X /></Button>}</div>
+              <div className="mb-3 flex items-center justify-between"><div><h2 className="text-base font-bold tracking-tight">{viewMode === 'finalized' ? 'Histórico finalizado' : statusFilters.length === 1 ? statuses.find((status) => status.code === statusFilters[0])?.label || 'Resultados' : statusFilters.length > 1 ? `${statusFilters.length} status selecionados` : search ? 'Resultados da busca' : storeFilter ? `Loja: ${storeFilter}` : 'Prioridade agora'}</h2><p className="text-xs text-muted-foreground">{visibleItems.length} {visibleItems.length === 1 ? 'devolução encontrada' : 'devoluções encontradas'}</p></div>{(statusFilters.length > 0 || storeFilter || search) && <Button variant="ghost" className="text-primary" onClick={() => { setStatusFilters([]); setStoreFilter(''); setSearch(''); }}>Limpar filtros <X /></Button>}</div>
 
               {error ? (
                 <Alert variant="destructive"><X /><AlertTitle>Não foi possível carregar</AlertTitle><AlertDescription>{error} <button className="font-semibold underline" onClick={() => loadReturns()}>Tentar novamente</button></AlertDescription></Alert>
               ) : loading ? (
                 <div className="grid min-h-56 place-items-center text-muted-foreground"><div className="text-center"><Loader2 className="mx-auto size-6 animate-spin" /><p className="mt-2 text-sm">Atualizando a fila...</p></div></div>
               ) : visibleItems.length === 0 ? (
-                <EmptyState finalized={viewMode === 'finalized'} hasFilters={Boolean(search || statusFilter || storeFilter)} onCreate={() => { window.location.href = '/receber'; }} onClear={() => { setSearch(''); setStatusFilter(''); setStoreFilter(''); }} />
+                <EmptyState finalized={viewMode === 'finalized'} hasFilters={Boolean(search || statusFilters.length > 0 || storeFilter)} onCreate={() => { window.location.href = '/receber'; }} onClear={() => { setSearch(''); setStatusFilters([]); setStoreFilter(''); }} />
               ) : (
                 <div className="grid gap-3 xl:grid-cols-3">
                   {visibleItems.map((item) => <ReturnCard key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' ? () => void deleteReturn(item) : undefined} />)}
@@ -218,6 +247,68 @@ export function Dashboard() {
 
       {notice && <output className="fixed bottom-24 left-1/2 z-50 w-[min(440px,calc(100%-2rem))] -translate-x-1/2 rounded-xl bg-foreground px-4 py-3 text-sm font-medium text-background shadow-xl lg:bottom-5">{notice}</output>}
 
+    </div>
+  );
+}
+
+function StatusMultiSelect({ statuses, selected, onChange }: { statuses: StatusDefinition[]; selected: string[]; onChange: (selected: string[]) => void }) {
+  const selectedStatuses = statuses.filter((status) => selected.includes(status.code));
+  const summary = selectedStatuses.length === 0
+    ? 'Todos os status em andamento'
+    : selectedStatuses.length === 1
+      ? selectedStatuses[0].label
+      : `${selectedStatuses.length} status selecionados`;
+
+  function toggle(code: string) {
+    onChange(selected.includes(code) ? selected.filter((statusCode) => statusCode !== code) : [...selected, code]);
+  }
+
+  return (
+    <div className="w-full lg:w-[22rem]">
+      <Popover>
+        <PopoverTrigger
+          type="button"
+          className="flex h-11 w-full items-center justify-between gap-3 rounded-lg border border-input bg-background px-3 text-left text-sm font-medium outline-none transition hover:bg-muted/45 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+          aria-label={`Filtrar por status. ${summary}`}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <ListFilter className="size-4 shrink-0 text-muted-foreground" />
+            {selectedStatuses.length > 0 && (
+              <span className="flex shrink-0 -space-x-1" aria-hidden="true">
+                {selectedStatuses.slice(0, 4).map((status) => (
+                  <span key={status.code} className="size-3 rounded-full ring-2 ring-background" style={statusDotStyle(status.color)} />
+                ))}
+              </span>
+            )}
+            <span className="truncate">{summary}</span>
+          </span>
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] gap-2 p-2.5">
+          <PopoverHeader className="flex-row items-start justify-between gap-3 px-1 pt-1">
+            <div>
+              <PopoverTitle className="font-bold">Filtrar por status</PopoverTitle>
+              <PopoverDescription className="mt-0.5 text-xs">Marque um ou vários status.</PopoverDescription>
+            </div>
+            {selected.length > 0 && (
+              <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs text-primary" onClick={() => onChange([])}>Limpar</Button>
+            )}
+          </PopoverHeader>
+          <fieldset className="max-h-72 space-y-1 overflow-y-auto pr-1">
+            <legend className="sr-only">Status disponíveis</legend>
+            {statuses.map((status) => {
+              const isSelected = selected.includes(status.code);
+              return (
+                <label key={status.code} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition ${isSelected ? 'border-primary/25 bg-primary/6' : 'border-transparent hover:bg-muted/60'}`}>
+                  <Checkbox checked={isSelected} onCheckedChange={() => toggle(status.code)} />
+                  <span className="size-3 shrink-0 rounded-full ring-4 ring-background" style={statusDotStyle(status.color)} aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{status.label}</span>
+                </label>
+              );
+            })}
+          </fieldset>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
