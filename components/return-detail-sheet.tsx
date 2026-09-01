@@ -34,6 +34,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
+import { apiFetch } from '@/lib/api-client';
 import {
   conditionOptions,
   destinationOptions,
@@ -145,7 +146,7 @@ export function ReturnDetailSheet({ open, returnId, statuses, onOpenChange, onCh
     let cancelled = false;
     setLoading(true);
     setServerError('');
-    fetch(`/api/returns/${returnId}`)
+    apiFetch(`/api/returns/${returnId}`)
       .then(async (response) => {
         const result = (await response.json()) as { item?: ReturnDetail; error?: string };
         if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível abrir a devolução.');
@@ -172,7 +173,7 @@ export function ReturnDetailSheet({ open, returnId, statuses, onOpenChange, onCh
       })(),
     };
     try {
-      const response = await fetch(`/api/returns/${returnId}`, {
+      const response = await apiFetch(`/api/returns/${returnId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -193,7 +194,7 @@ export function ReturnDetailSheet({ open, returnId, statuses, onOpenChange, onCh
     setFinalizing(true);
     setServerError('');
     try {
-      const response = await fetch(`/api/returns/${returnId}/finalize`, { method: 'POST' });
+      const response = await apiFetch(`/api/returns/${returnId}/finalize`, { method: 'POST' });
       const result = (await response.json()) as { item?: ReturnDetail; error?: string; details?: { blockingReasons?: string[] } };
       if (!response.ok || !result.item) {
         throw new Error(result.details?.blockingReasons?.join(' ') || result.error || 'Não foi possível finalizar.');

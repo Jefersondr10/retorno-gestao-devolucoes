@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode, type SyntheticEvent } from 'react';
-import { AlertCircle, ArrowLeft, CheckCircle2, HardDrive, Loader2, MapPin, PackageCheck, Pencil, Plus, Power, Save, Settings2, Store, Tags, Trash2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, HardDrive, Loader2, MapPin, PackageCheck, Pencil, Plus, Power, Save, Settings2, Store, Tags, Trash2, UsersRound } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -12,16 +12,20 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { UserManagementSection } from '@/components/user-management-section';
+import { UserMenu } from '@/components/user-menu';
+import { apiFetch } from '@/lib/api-client';
+import type { AuthUser } from '@/lib/auth';
 import type { ConfigOption, ConfigOptionsResponse, RetentionOverview, StatusDefinition } from '@/lib/returns';
 import { statusDotStyle, statusHex } from '@/lib/status-colors';
 
 const emptyOptions: ConfigOptionsResponse = { locations: [], stores: [], conditions: [] };
 const essentialStatuses = new Set(['PENDING_INFO', 'WAITING_TEST', 'WAITING_ENTRY', 'READY', 'FINALIZED']);
-type SettingsSection = 'status' | 'locais' | 'lojas' | 'condicoes' | 'retencao';
+type SettingsSection = 'status' | 'locais' | 'lojas' | 'condicoes' | 'retencao' | 'usuarios';
 type EditTarget = { kind: 'STATUS' | 'OPTION'; code: string; label: string; color?: string };
 type RetentionDraft = Pick<RetentionOverview, 'automaticEnabled' | 'photoRetentionDays' | 'returnRetentionDays'>;
 
-export function SettingsPage() {
+export function SettingsPage({ currentUser }: { currentUser: AuthUser }) {
   const [activeSection, setActiveSection] = useState<SettingsSection>('status');
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [options, setOptions] = useState<ConfigOptionsResponse>(emptyOptions);
@@ -46,9 +50,9 @@ export function SettingsPage() {
     setError('');
     try {
       const [statusResponse, optionResponse, retentionResponse] = await Promise.all([
-        fetch('/api/config/statuses?includeInactive=true'),
-        fetch('/api/config/options?includeInactive=true'),
-        fetch('/api/config/retention'),
+        apiFetch('/api/config/statuses?includeInactive=true'),
+        apiFetch('/api/config/options?includeInactive=true'),
+        apiFetch('/api/config/retention'),
       ]);
       const statusResult = (await statusResponse.json()) as { items?: StatusDefinition[]; error?: string };
       const optionResult = (await optionResponse.json()) as ConfigOptionsResponse & { error?: string };
@@ -73,7 +77,7 @@ export function SettingsPage() {
     if (!statusLabel.trim()) return;
     setSaving('CREATE_STATUS'); setError('');
     try {
-      const response = await fetch('/api/config/statuses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: statusLabel, color: statusColor }) });
+      const response = await apiFetch('/api/config/statuses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: statusLabel, color: statusColor }) });
       const result = (await response.json()) as { item?: StatusDefinition; error?: string };
       if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível cadastrar o status.');
       setStatusLabel(''); setNotice(`Status “${result.item.label}” cadastrado.`); await loadAll();
@@ -86,7 +90,7 @@ export function SettingsPage() {
     if (!label.trim()) return;
     setSaving(`CREATE_${type}`); setError('');
     try {
-      const response = await fetch('/api/config/options', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, label, color: type === 'CONDITION' ? conditionColor : type === 'LOCATION' ? '#0f766e' : storeColor, requiresInvoice: conditionRequiresInvoice, requiresNotes: conditionRequiresNotes }) });
+      const response = await apiFetch('/api/config/options', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, label, color: type === 'CONDITION' ? conditionColor : type === 'LOCATION' ? '#0f766e' : storeColor, requiresInvoice: conditionRequiresInvoice, requiresNotes: conditionRequiresNotes }) });
       const result = (await response.json()) as { item?: ConfigOption; error?: string };
       if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível salvar o cadastro.');
       if (type === 'LOCATION') setLocationLabel('');
@@ -100,7 +104,7 @@ export function SettingsPage() {
   async function updateStatus(status: StatusDefinition, changes: { label?: string; color?: string; active?: boolean }) {
     setSaving(status.code); setError('');
     try {
-      const response = await fetch(`/api/config/statuses/${encodeURIComponent(status.code)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
+      const response = await apiFetch(`/api/config/statuses/${encodeURIComponent(status.code)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
       const result = (await response.json()) as { item?: StatusDefinition; error?: string };
       if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível atualizar o status.');
       setNotice(`Status “${result.item.label}” atualizado.`); await loadAll();
@@ -111,7 +115,7 @@ export function SettingsPage() {
   async function updateOption(option: ConfigOption, changes: { label?: string; color?: string; active?: boolean }) {
     setSaving(option.code); setError('');
     try {
-      const response = await fetch(`/api/config/options/${encodeURIComponent(option.code)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
+      const response = await apiFetch(`/api/config/options/${encodeURIComponent(option.code)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
       const result = (await response.json()) as { item?: ConfigOption; error?: string };
       if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível atualizar o cadastro.');
       setNotice(`“${result.item.label}” atualizado.`); await loadAll();
@@ -123,7 +127,7 @@ export function SettingsPage() {
     if (!window.confirm(`Excluir definitivamente o status “${status.label}”? Esta ação não pode ser desfeita.`)) return;
     setSaving(status.code); setError('');
     try {
-      const response = await fetch(`/api/config/statuses/${encodeURIComponent(status.code)}`, { method: 'DELETE' });
+      const response = await apiFetch(`/api/config/statuses/${encodeURIComponent(status.code)}`, { method: 'DELETE' });
       const result = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(result.error || 'Não foi possível excluir o status.');
       setNotice(`Status “${status.label}” excluído.`); await loadAll();
@@ -135,7 +139,7 @@ export function SettingsPage() {
     if (!window.confirm(`Excluir definitivamente “${option.label}”? Esta ação não pode ser desfeita.`)) return;
     setSaving(option.code); setError('');
     try {
-      const response = await fetch(`/api/config/options/${encodeURIComponent(option.code)}`, { method: 'DELETE' });
+      const response = await apiFetch(`/api/config/options/${encodeURIComponent(option.code)}`, { method: 'DELETE' });
       const result = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(result.error || 'Não foi possível excluir o cadastro.');
       setNotice(`“${option.label}” excluído.`); await loadAll();
@@ -154,7 +158,7 @@ export function SettingsPage() {
   async function saveRetention(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault(); setSaving('RETENTION'); setError('');
     try {
-      const response = await fetch('/api/config/retention', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(retentionDraft) });
+      const response = await apiFetch('/api/config/retention', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(retentionDraft) });
       const result = (await response.json()) as { item?: RetentionOverview; error?: string };
       if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível salvar a retenção.');
       setRetention(result.item); setNotice('Política de retenção salva.');
@@ -170,7 +174,7 @@ export function SettingsPage() {
       let latestOverview: RetentionOverview | null = null;
       let previousRemaining = total;
       for (let batch = 0; batch < 20; batch += 1) {
-        const response = await fetch('/api/config/retention', { method: 'POST' });
+        const response = await apiFetch('/api/config/retention', { method: 'POST' });
         const result = (await response.json()) as { overview?: RetentionOverview; error?: string };
         if (!response.ok || !result.overview) throw new Error(result.error || 'Não foi possível executar a limpeza.');
         latestOverview = result.overview;
@@ -187,12 +191,20 @@ export function SettingsPage() {
 
   return (
     <div className="app-shell min-h-screen text-foreground">
-      <header className="sticky top-0 z-30 border-b border-border/75 bg-background/88 shadow-[0_1px_0_rgb(255_255_255/45%)] backdrop-blur-xl"><div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 sm:px-6"><button type="button" onClick={() => window.location.assign('/')} className="grid size-11 place-items-center rounded-xl text-muted-foreground outline-none transition hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às devoluções"><ArrowLeft className="size-5" /></button><div className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-primary to-emerald-700 text-primary-foreground shadow-[0_8px_20px_rgb(13_96_83/20%)]"><PackageCheck className="size-5" /></div><div><p className="text-base font-semibold">Configurações</p><p className="text-xs text-muted-foreground">Cadastros, arquivos e retenção</p></div><Button className="ml-auto hidden h-10 rounded-xl sm:inline-flex" onClick={() => window.location.assign('/receber')}><Plus /> Nova devolução</Button></div></header>
+      <header className="sticky top-0 z-30 border-b border-border/75 bg-background/88 shadow-[0_1px_0_rgb(255_255_255/45%)] backdrop-blur-xl">
+        <div className="mx-auto flex h-16 min-w-0 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-6">
+          <button type="button" onClick={() => window.location.assign('/')} className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none transition hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às devoluções"><ArrowLeft className="size-5" /></button>
+          <div className="hidden size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary to-emerald-700 text-primary-foreground shadow-[0_8px_20px_rgb(13_96_83/20%)] sm:grid"><PackageCheck className="size-5" /></div>
+          <div className="min-w-0 flex-1"><p className="truncate text-base font-semibold">Configurações</p><p className="truncate text-xs text-muted-foreground">Cadastros, arquivos e acessos</p></div>
+          <Button className="hidden h-10 shrink-0 rounded-xl lg:inline-flex" onClick={() => window.location.assign('/receber')}><Plus /> Nova devolução</Button>
+          <div className="shrink-0"><UserMenu user={currentUser} /></div>
+        </div>
+      </header>
 
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:py-9">
         <div><p className="text-sm font-semibold text-primary">Administração</p><h1 className="display-title mt-1 text-2xl sm:text-3xl">Configurações do sistema</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Edite os cadastros e controle quanto tempo fotos, vídeos e devoluções finalizadas permanecem armazenados.</p></div>
-        <div className="mt-6 lg:hidden"><Label htmlFor="settings-section" className="mb-2 block">Área de configuração</Label><NativeSelect id="settings-section" className="h-11 w-full bg-card" value={activeSection} onChange={(event) => setActiveSection(event.target.value as SettingsSection)}><NativeSelectOption value="status">Status e cores</NativeSelectOption><NativeSelectOption value="locais">Locais</NativeSelectOption><NativeSelectOption value="lojas">Lojas e cores</NativeSelectOption><NativeSelectOption value="condicoes">Condições</NativeSelectOption><NativeSelectOption value="retencao">Arquivos e retenção</NativeSelectOption></NativeSelect></div>
-        <nav aria-label="Seções de configurações" className="mt-6 hidden grid-cols-5 gap-2 rounded-2xl border bg-card/90 p-2 shadow-[var(--shadow-card)] lg:grid"><TopNav active={activeSection === 'status'} onClick={() => setActiveSection('status')} icon={<Tags />} label="Status e cores" /><TopNav active={activeSection === 'locais'} onClick={() => setActiveSection('locais')} icon={<MapPin />} label="Locais" /><TopNav active={activeSection === 'lojas'} onClick={() => setActiveSection('lojas')} icon={<Store />} label="Lojas e cores" /><TopNav active={activeSection === 'condicoes'} onClick={() => setActiveSection('condicoes')} icon={<CheckCircle2 />} label="Condições" /><TopNav active={activeSection === 'retencao'} onClick={() => setActiveSection('retencao')} icon={<HardDrive />} label="Arquivos e retenção" /></nav>
+        <div className="mt-6 lg:hidden"><Label htmlFor="settings-section" className="mb-2 block">Área de configuração</Label><NativeSelect id="settings-section" className="h-11 w-full bg-card" value={activeSection} onChange={(event) => setActiveSection(event.target.value as SettingsSection)}><NativeSelectOption value="status">Status e cores</NativeSelectOption><NativeSelectOption value="locais">Locais</NativeSelectOption><NativeSelectOption value="lojas">Lojas e cores</NativeSelectOption><NativeSelectOption value="condicoes">Condições</NativeSelectOption><NativeSelectOption value="retencao">Arquivos e retenção</NativeSelectOption><NativeSelectOption value="usuarios">Usuários e acessos</NativeSelectOption></NativeSelect></div>
+        <nav aria-label="Seções de configurações" className="mt-6 hidden grid-cols-3 gap-2 rounded-2xl border bg-card/90 p-2 shadow-[var(--shadow-card)] lg:grid xl:grid-cols-6"><TopNav active={activeSection === 'status'} onClick={() => setActiveSection('status')} icon={<Tags />} label="Status e cores" /><TopNav active={activeSection === 'locais'} onClick={() => setActiveSection('locais')} icon={<MapPin />} label="Locais" /><TopNav active={activeSection === 'lojas'} onClick={() => setActiveSection('lojas')} icon={<Store />} label="Lojas e cores" /><TopNav active={activeSection === 'condicoes'} onClick={() => setActiveSection('condicoes')} icon={<CheckCircle2 />} label="Condições" /><TopNav active={activeSection === 'retencao'} onClick={() => setActiveSection('retencao')} icon={<HardDrive />} label="Arquivos e retenção" /><TopNav active={activeSection === 'usuarios'} onClick={() => setActiveSection('usuarios')} icon={<UsersRound />} label="Usuários e acessos" /></nav>
 
         <main className="mt-6 min-w-0">
           {loading ? <Card className="grid min-h-48 place-items-center border-0 bg-card ring-border/80"><Loader2 className="size-6 animate-spin text-primary" /></Card> : <>
@@ -201,6 +213,7 @@ export function SettingsPage() {
             {activeSection === 'lojas' && <SettingsCard icon={<Store />} title="Lojas e cores" description="Use uma cor para reconhecer cada loja rapidamente nos filtros e nas devoluções."><form onSubmit={(event) => { event.preventDefault(); void createOption('STORE'); }} className="grid gap-4 rounded-2xl border bg-muted/20 p-4 sm:grid-cols-[minmax(0,1fr)_minmax(190px,240px)_auto] sm:items-end"><LabeledInput id="store-name" label="Nova loja" placeholder="Ex.: Loja Centro" value={storeLabel} onChange={setStoreLabel} /><ColorField id="store-color" label="Cor da loja" value={storeColor} onChange={setStoreColor} /><SaveButton saving={saving === 'CREATE_STORE'} disabled={!storeLabel.trim()} label="Cadastrar" /></form><ManagedOptions className="mt-5" items={options.stores} busy={saving} empty="Nenhuma loja cadastrada." showColor onEdit={(item) => setEditTarget({ kind: 'OPTION', code: item.code, label: item.label, color: statusHex(item.color) })} onToggle={(item) => void updateOption(item, { active: !item.active })} onDelete={(item) => void deleteOption(item)} /></SettingsCard>}
             {activeSection === 'condicoes' && <SettingsCard icon={<CheckCircle2 />} title="Condições do produto" description="Cadastre, edite, inative ou exclua as classificações usadas na análise do produto."><form onSubmit={(event) => { event.preventDefault(); void createOption('CONDITION'); }} className="rounded-2xl border bg-muted/20 p-4"><div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]"><LabeledInput id="condition-name" label="Nova condição" value={conditionLabel} onChange={setConditionLabel} placeholder="Ex.: Embalagem danificada" /><ColorField id="condition-color" label="Cor" value={conditionColor} onChange={setConditionColor} /></div><div className="mt-4 flex flex-col gap-3 rounded-xl border bg-card/70 p-4 sm:flex-row sm:gap-8"><CheckRow checked={conditionRequiresInvoice} onChange={setConditionRequiresInvoice} label="Exigir nota de entrada" /><CheckRow checked={conditionRequiresNotes} onChange={setConditionRequiresNotes} label="Exigir descrição da condição" /></div><div className="mt-4"><SaveButton saving={saving === 'CREATE_CONDITION'} disabled={!conditionLabel.trim()} label="Cadastrar condição" /></div></form><ManagedOptions className="mt-5" items={options.conditions} busy={saving} empty="Nenhuma condição cadastrada." showColor showPolicies onEdit={(item) => setEditTarget({ kind: 'OPTION', code: item.code, label: item.label, color: statusHex(item.color) })} onToggle={(item) => void updateOption(item, { active: !item.active })} onDelete={(item) => void deleteOption(item)} /></SettingsCard>}
             {activeSection === 'retencao' && <SettingsCard icon={<HardDrive />} title="Arquivos, espaço e retenção" description="Fotos são otimizadas para zoom e vídeos ficam limitados a trechos curtos. Você decide quando remover os arquivos e os registros finalizados."><dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Info label="Qualidade das fotos" value="Até 2048 px" detail="JPEG compatível e nítido" /><Info label="Foto máxima" value="2,5 MB" detail="Compressão automática" /><Info label="Vídeo curto" value="Até 20 s" detail="1 vídeo · até 40 MB" /><Info label="Por devolução" value="Até 8 fotos" detail="Mais 1 vídeo opcional" /></dl><form onSubmit={saveRetention} className="mt-6 space-y-5 rounded-2xl border bg-muted/20 p-4 sm:p-5"><CheckRow checked={retentionDraft.automaticEnabled} onChange={(checked) => setRetentionDraft((current) => ({ ...current, automaticEnabled: checked }))} label="Ativar exclusão automática" /><p className="text-xs leading-5 text-muted-foreground">A verificação ocorre periodicamente quando o sistema é utilizado. Somente devoluções finalizadas entram na limpeza.</p><div className="grid gap-4 sm:grid-cols-2"><NumberField id="photo-days" label="Excluir fotos e vídeos depois de" suffix="dias" value={retentionDraft.photoRetentionDays} min={7} onChange={(value) => setRetentionDraft((current) => ({ ...current, photoRetentionDays: value }))} /><NumberField id="return-days" label="Excluir registro completo depois de" suffix="dias" value={retentionDraft.returnRetentionDays} min={30} onChange={(value) => setRetentionDraft((current) => ({ ...current, returnRetentionDays: value }))} /></div><Alert className="border-amber-200 bg-amber-50 text-amber-900"><AlertCircle /><AlertTitle>Exclusão permanente</AlertTitle><AlertDescription>Confirme as obrigações fiscais antes de apagar devoluções com nota de entrada. O prazo é contado a partir da finalização.</AlertDescription></Alert><Button type="submit" className="h-11" disabled={saving === 'RETENTION'}>{saving === 'RETENTION' ? <Loader2 className="animate-spin" /> : <Save />} Salvar política</Button></form>{retention && <div className="mt-5 rounded-2xl border p-4 sm:p-5"><div className="grid gap-3 sm:grid-cols-3"><Info label="Arquivos elegíveis agora" value={String(retention.eligiblePhotos + retention.eligibleVideos)} detail={`${formatBytes(retention.eligiblePhotoBytes + retention.eligibleVideoBytes)} · ${retention.eligiblePhotos} foto(s) e ${retention.eligibleVideos} vídeo(s)`} /><Info label="Registros elegíveis agora" value={String(retention.eligibleReturns)} detail="Devoluções finalizadas" /><Info label="Última limpeza" value={retention.lastCleanupAt ? formatDate(retention.lastCleanupAt) : 'Ainda não executada'} detail={retention.lastCleanupAt ? `${retention.lastCleanupPhotos} fotos · ${retention.lastCleanupVideos} vídeos · ${retention.lastCleanupReturns} registros` : 'Nenhum dado removido'} /></div><Button type="button" variant="destructive" className="mt-4 h-11" disabled={saving === 'CLEANUP' || retention.eligiblePhotos + retention.eligibleVideos + retention.eligibleReturns === 0} onClick={() => void runCleanup()}>{saving === 'CLEANUP' ? <Loader2 className="animate-spin" /> : <Trash2 />} Executar limpeza agora</Button></div>}</SettingsCard>}
+            {activeSection === 'usuarios' && <SettingsCard icon={<UsersRound />} title="Usuários e acessos" description="Crie acessos individuais, escolha o perfil e encerre imediatamente o acesso de quem não faz mais parte da operação."><UserManagementSection currentUser={currentUser} /></SettingsCard>}
           </>}
           {error && <Alert variant="destructive" className="mt-5"><AlertCircle /><AlertTitle>Não foi possível concluir</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         </main>

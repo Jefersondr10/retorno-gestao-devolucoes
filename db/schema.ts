@@ -1,4 +1,5 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
+import { check, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const returnSequences = sqliteTable('return_sequences', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -38,6 +39,69 @@ export const systemSettings = sqliteTable('system_settings', {
   value: text('value').notNull(),
   updatedAt: text('updated_at').notNull(),
 });
+
+export const users = sqliteTable(
+  'users',
+  {
+    id: text('id').primaryKey(),
+    username: text('username').notNull(),
+    displayName: text('display_name').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    passwordSalt: text('password_salt').notNull(),
+    passwordIterations: integer('password_iterations').notNull(),
+    role: text('role').notNull().default('OPERATOR'),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+    mustChangePassword: integer('must_change_password', { mode: 'boolean' }).notNull().default(true),
+    failedAttempts: integer('failed_attempts').notNull().default(0),
+    lockedUntil: text('locked_until'),
+    lastLoginAt: text('last_login_at'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_users_username').on(table.username),
+    index('idx_users_active_role').on(table.active, table.role),
+    check('users_role_check', sql`${table.role} IN ('ADMIN', 'OPERATOR')`),
+  ],
+);
+
+export const authSessions = sqliteTable(
+  'auth_sessions',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    csrfHash: text('csrf_hash').notNull(),
+    expiresAt: text('expires_at').notNull(),
+    createdAt: text('created_at').notNull(),
+    lastSeenAt: text('last_seen_at').notNull(),
+  },
+  (table) => [
+    index('idx_auth_sessions_user').on(table.userId),
+    index('idx_auth_sessions_expires').on(table.expiresAt),
+  ],
+);
+
+export const authRateLimits = sqliteTable('auth_rate_limits', {
+  subjectHash: text('subject_hash').primaryKey(),
+  attempts: integer('attempts').notNull().default(0),
+  windowStartedAt: text('window_started_at').notNull(),
+  blockedUntil: text('blocked_until'),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const authBootstrap = sqliteTable(
+  'auth_bootstrap',
+  {
+    id: integer('id').primaryKey(),
+    completedAt: text('completed_at').notNull(),
+    adminUserId: text('admin_user_id')
+      .notNull()
+      .references(() => users.id),
+  },
+  (table) => [check('auth_bootstrap_singleton_check', sql`${table.id} = 1`)],
+);
 
 export const returns = sqliteTable(
   'returns',

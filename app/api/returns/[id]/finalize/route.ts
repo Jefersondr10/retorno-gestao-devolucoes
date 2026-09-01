@@ -1,4 +1,5 @@
-import { actorFrom, apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
+import { actorLabel, authenticateApi } from '@/lib/auth';
+import { apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 
@@ -6,6 +7,8 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN', 'OPERATOR'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;
     const item = await getReturnDetail(id);
@@ -18,7 +21,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const { db } = getBindings();
-    const actor = actorFrom(request);
+    const actor = actorLabel(auth.user);
     const now = new Date().toISOString();
     await db.batch([
       db

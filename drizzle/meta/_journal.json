@@ -29,6 +29,13 @@
       "when": 1788152788686,
       "tag": "0003_outstanding_ironclad",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788231835034,
+      "tag": "0004_wandering_black_tarantula",
+      "breakpoints": true
     }
   ]
 }

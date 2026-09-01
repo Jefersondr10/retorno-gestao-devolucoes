@@ -35,10 +35,13 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover';
 import { ReturnWorkspace } from '@/components/return-workspace';
+import { UserMenu } from '@/components/user-menu';
+import { apiFetch } from '@/lib/api-client';
+import type { AuthUser } from '@/lib/auth';
 import type { ConfigOption, ConfigOptionsResponse, ReturnSummary, StatusDefinition } from '@/lib/returns';
 import { statusClass, statusDotStyle, statusStyle } from '@/lib/status-colors';
 
-export function Dashboard() {
+export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
   const [items, setItems] = useState<ReturnSummary[]>([]);
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,7 +63,7 @@ export function Dashboard() {
       const params = new URLSearchParams();
       if (query.trim()) params.set('q', query.trim());
       if (nextView === 'finalized') params.set('status', 'FINALIZED');
-      const response = await fetch(`/api/returns?${params}`);
+      const response = await apiFetch(`/api/returns?${params}`);
       const result = (await response.json()) as { items?: ReturnSummary[]; error?: string };
       if (!response.ok) throw new Error(result.error || 'Não foi possível carregar as devoluções.');
       setItems(result.items || []);
@@ -74,8 +77,8 @@ export function Dashboard() {
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
-      fetch('/api/config/statuses?includeInactive=true').then(async (response) => ({ response, result: (await response.json()) as { items?: StatusDefinition[] } })),
-      fetch('/api/config/options').then(async (response) => ({ response, result: (await response.json()) as ConfigOptionsResponse })),
+      apiFetch('/api/config/statuses?includeInactive=true').then(async (response) => ({ response, result: (await response.json()) as { items?: StatusDefinition[] } })),
+      apiFetch('/api/config/options').then(async (response) => ({ response, result: (await response.json()) as ConfigOptionsResponse })),
     ])
       .then(([statusResponse, optionResponse]) => {
         if (cancelled) return;
@@ -142,7 +145,7 @@ export function Dashboard() {
     setDeletingId(item.id);
     setError('');
     try {
-      const response = await fetch(`/api/returns/${item.id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmProtocol: confirmation }) });
+      const response = await apiFetch(`/api/returns/${item.id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmProtocol: confirmation }) });
       const result = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(result.error || 'Não foi possível excluir a devolução.');
       setItems((current) => current.filter((currentItem) => currentItem.id !== item.id));
@@ -169,13 +172,14 @@ export function Dashboard() {
 
           <div className="ml-auto flex items-center gap-2">
             <Button size="lg" className="h-11 rounded-xl px-4 shadow-[0_8px_20px_rgb(13_96_83/18%)]" onClick={() => { window.location.href = '/receber'; }}><Camera /><span className="hidden sm:inline">Registrar recebimento</span><span className="sm:hidden">Registrar</span></Button>
+            <UserMenu user={currentUser} />
           </div>
         </div>
         <nav aria-label="Navegação principal" className="mx-auto hidden max-w-7xl items-center gap-2 border-t border-border/60 px-4 py-2 sm:px-6 lg:flex">
           <HeaderNav active={viewMode === 'pending'} icon={<LayoutDashboard />} label="Pendências" onClick={() => changeView('pending')} />
           <HeaderNav active={viewMode === 'finalized'} icon={<Archive />} label="Finalizadas" onClick={() => changeView('finalized')} />
           <HeaderNav icon={<Store />} label="Filtrar por loja" onClick={() => document.querySelector<HTMLButtonElement>('button[aria-label^="Filtrar por loja"]')?.focus()} />
-          <HeaderNav icon={<Settings />} label="Configurações" onClick={() => { window.location.href = '/configuracoes'; }} />
+          {currentUser.role === 'ADMIN' && <HeaderNav icon={<Settings />} label="Configurações" onClick={() => { window.location.href = '/configuracoes'; }} />}
           <p className="ml-auto text-xs text-muted-foreground">{viewMode === 'finalized' ? 'Histórico concluído e limpeza de armazenamento' : 'Fila operacional em andamento'}</p>
         </nav>
       </header>
@@ -251,20 +255,20 @@ export function Dashboard() {
               ) : (
                 <div className={listLayout === 'grid' ? 'grid gap-3 xl:grid-cols-3' : 'space-y-2'}>
                   {visibleItems.map((item) => listLayout === 'grid'
-                    ? <ReturnCard key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' ? () => void deleteReturn(item) : undefined} />
-                    : <ReturnListRow key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' ? () => void deleteReturn(item) : undefined} />)}
+                    ? <ReturnCard key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && currentUser.role === 'ADMIN' ? () => void deleteReturn(item) : undefined} />
+                    : <ReturnListRow key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && currentUser.role === 'ADMIN' ? () => void deleteReturn(item) : undefined} />)}
                 </div>
               )}
             </section>
           </div>
       </main>
 
-      <nav aria-label="Navegação móvel" className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 rounded-2xl border border-border/80 bg-card/95 px-1 py-2 shadow-[var(--shadow-floating)] backdrop-blur-xl lg:hidden">
+      <nav aria-label="Navegação móvel" className={`fixed inset-x-3 bottom-3 z-40 grid ${currentUser.role === 'ADMIN' ? 'grid-cols-5' : 'grid-cols-4'} rounded-2xl border border-border/80 bg-card/95 px-1 py-2 shadow-[var(--shadow-floating)] backdrop-blur-xl lg:hidden`}>
         <MobileNav icon={<LayoutDashboard />} label="Pendentes" active={viewMode === 'pending'} onClick={() => changeView('pending')} />
         <MobileNav icon={<Archive />} label="Finalizadas" active={viewMode === 'finalized'} onClick={() => changeView('finalized')} />
         <MobileNav icon={<Camera />} label="Nova" onClick={() => { window.location.href = '/receber'; }} />
         <MobileNav icon={<Search />} label="Buscar" onClick={() => document.querySelector<HTMLInputElement>('input[aria-label="Buscar devolução"]')?.focus()} />
-        <MobileNav icon={<Settings />} label="Ajustes" onClick={() => { window.location.href = '/configuracoes'; }} />
+        {currentUser.role === 'ADMIN' && <MobileNav icon={<Settings />} label="Ajustes" onClick={() => { window.location.href = '/configuracoes'; }} />}
       </nav>
 
       <Dialog open={Boolean(detailId)} onOpenChange={(open) => {
@@ -275,7 +279,7 @@ export function Dashboard() {
       }}>
         <DialogContent showCloseButton={false} className="h-dvh w-screen max-w-none gap-0 overflow-hidden rounded-none p-0 sm:h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:rounded-3xl">
           <DialogTitle className="sr-only">Gerenciar devolução</DialogTitle>
-          {detailId && <ReturnWorkspace returnId={detailId} embedded onClose={() => {
+          {detailId && <ReturnWorkspace returnId={detailId} currentUser={currentUser} embedded onClose={() => {
             setDetailId(null);
             void loadReturns(search, viewMode);
           }} />}

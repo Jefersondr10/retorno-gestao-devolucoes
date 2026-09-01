@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { apiFetch } from '@/lib/api-client';
 import { createReturnSchema, type ReturnDetail } from '@/lib/returns';
 
 type CreateInput = z.input<typeof createReturnSchema>;
@@ -107,7 +108,7 @@ export function CreateReturnDialog({ open, onOpenChange, onCreated, onView }: Pr
     photos.forEach((photo) => payload.append('photos', photo));
 
     try {
-      const response = await fetch('/api/returns', { method: 'POST', body: payload });
+      const response = await apiFetch('/api/returns', { method: 'POST', body: payload });
       const result = (await response.json()) as {
         item?: ReturnDetail;
         duplicates?: Array<{ id: string; protocol: string }>;

@@ -1,4 +1,5 @@
-import { actorFrom, apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
+import { actorLabel, authenticateApi } from '@/lib/auth';
+import { apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
 import { completeStorageDeletionEvents, prepareStorageDeletionOutbox } from '@/lib/retention';
 import { getBlockingReasons, updateReturnSchema } from '@/lib/returns';
 
@@ -15,8 +16,10 @@ function queuedObjectKeys(details: string | null) {
   }
 }
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { csrf: false });
+    if ('response' in auth) return auth.response;
     const { id } = await context.params;
     const item = await getReturnDetail(id);
     if (!item) return apiError('Devolução não encontrada.', 404);
@@ -29,6 +32,8 @@ export async function GET(_request: Request, context: RouteContext) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN', 'OPERATOR'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;
     const current = await getReturnDetail(id);
@@ -75,7 +80,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     conditionPolicies.results.filter((condition) => condition.requires_notes === 1).map((condition) => condition.code));
     if (data.status === 'WAITING_ENTRY' && preliminaryReasons.length === 0) nextStatus = 'READY';
 
-    const actor = actorFrom(request);
+    const actor = actorLabel(auth.user);
     const now = new Date().toISOString();
     const operations: D1PreparedStatement[] = [
       db
@@ -152,6 +157,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 export async function DELETE(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;
     const current = await getReturnDetail(id);
@@ -177,7 +184,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     ])];
 
     const now = new Date().toISOString();
-    const actor = actorFrom(request);
+    const actor = actorLabel(auth.user);
     const outbox = prepareStorageDeletionOutbox(db, {
       objectKeys,
       actor,

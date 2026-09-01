@@ -17,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { apiFetch } from '@/lib/api-client';
 import type { StatusDefinition } from '@/lib/returns';
 
 const colorLabels = [
@@ -57,7 +58,7 @@ export function StatusSettingsDialog({ open, statuses, onOpenChange, onStatusCre
     setError('');
     setSaving(true);
     try {
-      const response = await fetch('/api/config/statuses', {
+      const response = await apiFetch('/api/config/statuses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label, color }),

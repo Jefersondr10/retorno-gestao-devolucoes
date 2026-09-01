@@ -1,3 +1,4 @@
+import { authenticateApi } from '@/lib/auth';
 import { apiError, ensureSchema, getBindings } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
@@ -53,6 +54,8 @@ function parseRange(value: string | null, size: number) {
 
 export async function GET(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { csrf: false });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;
     const { db, files } = getBindings();
@@ -95,6 +98,8 @@ export async function GET(request: Request, context: RouteContext) {
     const fileName = disposition === 'attachment' ? videoDownloadName(video) : video.file_name.replace(/["\r\n]/g, '');
     headers.set('Content-Disposition', `${disposition}; filename="${fileName}"`);
     headers.set('Cache-Control', 'private, no-store');
+    headers.set('Vary', 'Cookie');
+    headers.set('X-Content-Type-Options', 'nosniff');
     return new Response(object.body, { status: range ? 206 : 200, headers });
   } catch (error) {
     console.error(error);

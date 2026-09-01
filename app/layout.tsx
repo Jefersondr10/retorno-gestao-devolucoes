@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://retorno-gestao-devolucoes.jefersondr10.chatgpt.site'),
+  metadataBase: new URL('https://devolucoes.nucleodeoperacao.com.br'),
   title: 'Retorno — Gestão de devoluções',
   description: 'Receba, classifique e finalize devoluções com segurança.',
   openGraph: {

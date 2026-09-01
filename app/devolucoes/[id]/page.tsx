@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { ReturnWorkspace } from '@/components/return-workspace';
+import { requirePageUser } from '@/lib/auth-page';
 
 export const metadata: Metadata = {
   title: 'Gerenciar devolução · Retorno',
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
 };
 
 export default async function ReturnPage({ params }: { params: Promise<{ id: string }> }) {
+  const user = await requirePageUser();
   const { id } = await params;
-  return <ReturnWorkspace returnId={id} />;
+  return <ReturnWorkspace returnId={id} currentUser={user} />;
 }

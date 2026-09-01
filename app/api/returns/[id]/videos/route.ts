@@ -1,4 +1,5 @@
-import { actorFrom, apiError, ensureSchema, getBindings } from '@/lib/data';
+import { actorLabel, authenticateApi } from '@/lib/auth';
+import { apiError, ensureSchema, getBindings } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 
@@ -6,6 +7,8 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function DELETE(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;
     const { db, files } = getBindings();
@@ -20,7 +23,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     if (!videos.results.length) return Response.json({ deleted: 0 });
 
     const now = new Date().toISOString();
-    const actor = actorFrom(request);
+    const actor = actorLabel(auth.user);
     const auditId = crypto.randomUUID();
     const details = {
       count: videos.results.length,

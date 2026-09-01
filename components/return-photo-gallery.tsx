@@ -6,6 +6,7 @@ import { Download, Expand, Images, Loader2, Trash2, Video } from 'lucide-react';
 import { PhotoLightbox } from '@/components/photo-lightbox';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
+import { apiFetch } from '@/lib/api-client';
 import { formatVideoDuration, formatVideoSize } from '@/lib/client-video';
 import type { ReturnDetail } from '@/lib/returns';
 import { cn } from '@/lib/utils';
@@ -16,6 +17,7 @@ export function ReturnPhotoGallery({
   videos = [],
   returnId,
   finalized = false,
+  canDeleteVideos = false,
   onVideosDeleted,
 }: {
   protocol: string;
@@ -23,6 +25,7 @@ export function ReturnPhotoGallery({
   videos?: ReturnDetail['videos'];
   returnId?: string;
   finalized?: boolean;
+  canDeleteVideos?: boolean;
   onVideosDeleted?: (count: number, storagePending: boolean) => void | Promise<void>;
 }) {
   const [selected, setSelected] = useState(0);
@@ -65,7 +68,7 @@ export function ReturnPhotoGallery({
     setDeletingVideos(true);
     setVideoError('');
     try {
-      const response = await fetch(`/api/returns/${returnId}/videos`, { method: 'DELETE' });
+      const response = await apiFetch(`/api/returns/${returnId}/videos`, { method: 'DELETE' });
       const result = (await response.json()) as { deleted?: number; storagePending?: boolean; error?: string };
       if (!response.ok) throw new Error(result.error || 'Não foi possível excluir os vídeos.');
       await onVideosDeleted?.(result.deleted || videos.length, Boolean(result.storagePending));
@@ -170,7 +173,7 @@ export function ReturnPhotoGallery({
             </article>
           ))}
 
-          {finalized && returnId && (
+          {finalized && returnId && canDeleteVideos && (
             <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-3">
               <p className="text-xs leading-5 text-muted-foreground">Para liberar espaço, você pode apagar somente {videos.length === 1 ? 'o vídeo' : 'os vídeos'}. As fotos e todo o histórico continuarão guardados.</p>
               <Button type="button" variant="ghost" size="sm" className="mt-2 h-11 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={deletingVideos} onClick={() => void deleteOnlyVideos()}>

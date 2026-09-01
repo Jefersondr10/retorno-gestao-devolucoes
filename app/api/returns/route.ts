@@ -1,4 +1,5 @@
-import { actorFrom, apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
+import { actorLabel, authenticateApi } from '@/lib/auth';
+import { apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
 import { createReturnSchema } from '@/lib/returns';
 import { runRetentionCleanup } from '@/lib/retention';
 import { readVideoDurationMs } from '@/lib/video-metadata';
@@ -8,6 +9,14 @@ export const dynamic = 'force-dynamic';
 const MAX_VIDEO_BYTES = 40 * 1024 * 1024;
 const MAX_VIDEO_DURATION_MS = 20_000;
 const MAX_MULTIPART_BYTES = 64 * 1024 * 1024;
+
+async function detectPhotoContentType(file: File) {
+  const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.length >= 8 && bytes[0] === 0x89 && String.fromCharCode(...bytes.slice(1, 4)) === 'PNG') return 'image/png';
+  if (bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp';
+  return '';
+}
 
 async function detectVideoContentType(file: File) {
   const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
@@ -28,8 +37,9 @@ async function detectVideoContentType(file: File) {
 
 export async function GET(request: Request) {
   try {
+    const auth = await authenticateApi(request, { csrf: false });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
-    await runRetentionCleanup().catch((cleanupError) => console.error('Automatic retention cleanup failed', cleanupError));
     const { db } = getBindings();
     const url = new URL(request.url);
     const query = url.searchParams.get('q')?.trim().toLowerCase() || '';
@@ -95,9 +105,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const uploadedKeys: string[] = [];
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN', 'OPERATOR'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { db, files } = getBindings();
-    const actor = actorFrom(request);
+    const actor = actorLabel(auth.user);
     const declaredBodyBytes = Number(request.headers.get('content-length'));
     if (Number.isFinite(declaredBodyBytes) && declaredBodyBytes > MAX_MULTIPART_BYTES) {
       return apiError('O envio ficou grande demais. Reduza o vídeo ou a quantidade de fotos.', 413);
@@ -135,9 +147,12 @@ export async function POST(request: Request) {
     }
     if (photos.length > 8) return apiError('Envie no máximo 8 fotos por vez.', 422);
     if (videos.length > 1) return apiError('Envie no máximo 1 vídeo por devolução.', 422);
+    const preparedPhotos: Array<{ file: File; contentType: string }> = [];
     for (const photo of photos) {
-      if (!photo.type.startsWith('image/')) return apiError('Envie somente arquivos de imagem.', 422);
       if (photo.size > 2.5 * 1024 * 1024) return apiError('Cada foto deve ter no máximo 2,5 MB.', 422);
+      const contentType = await detectPhotoContentType(photo);
+      if (!contentType) return apiError('Use fotos JPEG, PNG ou WebP válidas.', 422);
+      preparedPhotos.push({ file: photo, contentType });
     }
     const requestedVideoDurationMs = Number(getText('videoDurationMs'));
     if (videos.length && (!Number.isFinite(requestedVideoDurationMs) || requestedVideoDurationMs <= 0 || requestedVideoDurationMs > MAX_VIDEO_DURATION_MS + 500)) {
@@ -196,13 +211,14 @@ export async function POST(request: Request) {
       durationMs: number;
     }> = [];
 
-    for (const photo of photos) {
+    for (const preparedPhoto of preparedPhotos) {
+      const { file: photo, contentType } = preparedPhoto;
       const photoId = crypto.randomUUID();
       const safeName = photo.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120) || 'foto.jpg';
       const key = `returns/${id}/photos/${photoId}-${safeName}`;
-      await files.put(key, photo.stream(), { httpMetadata: { contentType: photo.type } });
+      await files.put(key, photo.stream(), { httpMetadata: { contentType } });
       uploadedKeys.push(key);
-      photoRows.push({ id: photoId, key, fileName: photo.name, contentType: photo.type, size: photo.size });
+      photoRows.push({ id: photoId, key, fileName: photo.name, contentType, size: photo.size });
     }
     for (const video of preparedVideos) {
       const videoId = crypto.randomUUID();
@@ -287,6 +303,7 @@ export async function POST(request: Request) {
 
     await db.batch(operations);
     const created = await getReturnDetail(id);
+    await runRetentionCleanup({ actor: 'Sistema · limpeza automática' }).catch((cleanupError) => console.error('Automatic retention cleanup failed', cleanupError));
     return Response.json({ item: created, duplicates }, { status: 201 });
   } catch (error) {
     console.error(error);

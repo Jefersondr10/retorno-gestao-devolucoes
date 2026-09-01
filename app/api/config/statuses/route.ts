@@ -1,9 +1,12 @@
-import { actorFrom, apiError, ensureSchema, getBindings } from '@/lib/data';
+import { actorLabel, authenticateApi } from '@/lib/auth';
+import { apiError, ensureSchema, getBindings } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   try {
+    const auth = await authenticateApi(request, { csrf: false });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { db } = getBindings();
     const includeInactive = new URL(request.url).searchParams.get('includeInactive') === 'true';
@@ -23,6 +26,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const body = (await request.json()) as { label?: string; color?: string };
     const label = body.label?.trim();
@@ -55,7 +60,7 @@ export async function POST(request: Request) {
           `INSERT INTO audit_events (id, return_id, actor, action, details, created_at)
            VALUES (?, NULL, ?, 'STATUS_CREATED', ?, ?)`,
         )
-        .bind(crypto.randomUUID(), actorFrom(request), JSON.stringify({ code, label, color }), new Date().toISOString()),
+        .bind(crypto.randomUUID(), actorLabel(auth.user), JSON.stringify({ code, label, color }), new Date().toISOString()),
     ]);
     return Response.json({ item: { code, label, color, is_system: 0, sort_order: 100, active: 1 } }, { status: 201 });
   } catch (error) {

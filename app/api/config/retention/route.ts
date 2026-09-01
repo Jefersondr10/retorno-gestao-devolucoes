@@ -1,10 +1,13 @@
-import { actorFrom, apiError, ensureSchema } from '@/lib/data';
+import { actorLabel, authenticateApi } from '@/lib/auth';
+import { apiError, ensureSchema, getBindings } from '@/lib/data';
 import { getRetentionOverview, runRetentionCleanup, saveRetentionPolicy } from '@/lib/retention';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'], csrf: false });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     return Response.json({ item: await getRetentionOverview() });
   } catch (error) {
@@ -15,6 +18,8 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const body = (await request.json()) as {
       automaticEnabled?: boolean;
@@ -37,6 +42,12 @@ export async function PATCH(request: Request) {
       photoRetentionDays,
       returnRetentionDays,
     });
+    const { db } = getBindings();
+    const now = new Date().toISOString();
+    await db
+      .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'RETENTION_UPDATED', ?, ?)")
+      .bind(crypto.randomUUID(), actorLabel(auth.user), JSON.stringify(item), now)
+      .run();
     return Response.json({ item });
   } catch (error) {
     console.error(error);
@@ -46,8 +57,10 @@ export async function PATCH(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
-    const result = await runRetentionCleanup({ force: true, actor: actorFrom(request) });
+    const result = await runRetentionCleanup({ force: true, actor: actorLabel(auth.user) });
     return Response.json(result);
   } catch (error) {
     console.error(error);

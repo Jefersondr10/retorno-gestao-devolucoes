@@ -1,4 +1,5 @@
-import { actorFrom, apiError, ensureSchema, getBindings } from '@/lib/data';
+import { actorLabel, authenticateApi } from '@/lib/auth';
+import { apiError, ensureSchema, getBindings } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,8 @@ function validColor(value: string | undefined) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { code } = await context.params;
     const { db } = getBindings();
@@ -35,7 +38,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       db.prepare('UPDATE status_definitions SET label = ?, color = ?, active = ? WHERE code = ?').bind(label, color, active, code),
       db
         .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'STATUS_UPDATED', ?, ?)")
-        .bind(crypto.randomUUID(), actorFrom(request), JSON.stringify({ code, previous: current, next: { label, color, active } }), now),
+        .bind(crypto.randomUUID(), actorLabel(auth.user), JSON.stringify({ code, previous: current, next: { label, color, active } }), now),
     ]);
     return Response.json({ item: { ...current, label, color, active } });
   } catch (error) {
@@ -46,6 +49,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 export async function DELETE(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { code } = await context.params;
     const { db } = getBindings();
@@ -62,7 +67,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       db.prepare('DELETE FROM status_definitions WHERE code = ?').bind(code),
       db
         .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'STATUS_DELETED', ?, ?)")
-        .bind(crypto.randomUUID(), actorFrom(request), JSON.stringify(current), now),
+        .bind(crypto.randomUUID(), actorLabel(auth.user), JSON.stringify(current), now),
     ]);
     return Response.json({ deleted: true });
   } catch (error) {

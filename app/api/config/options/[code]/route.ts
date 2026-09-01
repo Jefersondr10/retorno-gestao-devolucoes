@@ -1,4 +1,5 @@
-import { actorFrom, apiError, ensureSchema, getBindings } from '@/lib/data';
+import { actorLabel, authenticateApi } from '@/lib/auth';
+import { apiError, ensureSchema, getBindings } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,8 @@ async function usageCount(option: OptionRecord) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { code } = await context.params;
     const { db } = getBindings();
@@ -55,7 +58,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     operations.push(
       db
         .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'CONFIG_OPTION_UPDATED', ?, ?)")
-        .bind(crypto.randomUUID(), actorFrom(request), JSON.stringify({ code, previous: current, next: { label, color, active } }), now),
+        .bind(crypto.randomUUID(), actorLabel(auth.user), JSON.stringify({ code, previous: current, next: { label, color, active } }), now),
     );
     await db.batch(operations);
     return Response.json({ item: { ...current, label, color, active, usage_count: await usageCount({ ...current, label, color, active }) } });
@@ -67,6 +70,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 export async function DELETE(request: Request, context: RouteContext) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { code } = await context.params;
     const { db } = getBindings();
@@ -80,7 +85,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       db.prepare('DELETE FROM config_options WHERE code = ?').bind(code),
       db
         .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'CONFIG_OPTION_DELETED', ?, ?)")
-        .bind(crypto.randomUUID(), actorFrom(request), JSON.stringify(current), now),
+        .bind(crypto.randomUUID(), actorLabel(auth.user), JSON.stringify(current), now),
     ]);
     return Response.json({ deleted: true });
   } catch (error) {

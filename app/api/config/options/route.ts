@@ -1,4 +1,5 @@
-import { actorFrom, apiError, ensureSchema, getBindings } from '@/lib/data';
+import { actorLabel, authenticateApi } from '@/lib/auth';
+import { apiError, ensureSchema, getBindings } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 
@@ -7,6 +8,8 @@ type OptionType = (typeof allowedTypes)[number];
 
 export async function GET(request: Request) {
   try {
+    const auth = await authenticateApi(request, { csrf: false });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const { db } = getBindings();
     const includeInactive = new URL(request.url).searchParams.get('includeInactive') === 'true';
@@ -37,6 +40,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    if ('response' in auth) return auth.response;
     await ensureSchema();
     const body = (await request.json()) as {
       type?: string;
@@ -84,7 +89,7 @@ export async function POST(request: Request) {
         )
         .bind(
           crypto.randomUUID(),
-          actorFrom(request),
+          actorLabel(auth.user),
           JSON.stringify({ code, type, label, color, requiresInvoice, requiresNotes }),
           now,
         ),

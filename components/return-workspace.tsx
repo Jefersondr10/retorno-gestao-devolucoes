@@ -35,6 +35,9 @@ import {
   SelectTrigger,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { UserMenu } from '@/components/user-menu';
+import { apiFetch } from '@/lib/api-client';
+import type { AuthUser } from '@/lib/auth';
 import {
   destinationOptions,
   getBlockingReasons,
@@ -83,7 +86,7 @@ function mapDetail(item: ReturnDetail): UpdateInput {
   };
 }
 
-export function ReturnWorkspace({ returnId, embedded = false, onClose }: { returnId: string; embedded?: boolean; onClose?: () => void }) {
+export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClose }: { returnId: string; currentUser: AuthUser; embedded?: boolean; onClose?: () => void }) {
   const [detail, setDetail] = useState<ReturnDetail | null>(null);
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [options, setOptions] = useState<ConfigOptionsResponse>({ locations: [], stores: [], conditions: [] });
@@ -132,17 +135,17 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      fetch(`/api/returns/${returnId}`).then(async (response) => {
+      apiFetch(`/api/returns/${returnId}`).then(async (response) => {
         const result = (await response.json()) as { item?: ReturnDetail; error?: string };
         if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível abrir a devolução.');
         return result.item;
       }),
-      fetch('/api/config/statuses?includeInactive=true').then(async (response) => {
+      apiFetch('/api/config/statuses?includeInactive=true').then(async (response) => {
         const result = (await response.json()) as { items?: StatusDefinition[]; error?: string };
         if (!response.ok) throw new Error(result.error || 'Não foi possível carregar os status.');
         return result.items || [];
       }),
-      fetch('/api/config/options').then(async (response) => {
+      apiFetch('/api/config/options').then(async (response) => {
         const result = (await response.json()) as ConfigOptionsResponse & { error?: string };
         if (!response.ok) throw new Error(result.error || 'Não foi possível carregar os cadastros.');
         return result;
@@ -171,7 +174,7 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
     const parsedDate = new Date(data.receivedAt);
     const payload = { ...data, receivedAt: Number.isNaN(parsedDate.getTime()) ? data.receivedAt : parsedDate.toISOString() };
     try {
-      const response = await fetch(`/api/returns/${returnId}`, {
+      const response = await apiFetch(`/api/returns/${returnId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -192,7 +195,7 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
     setFinalizing(true);
     setServerError('');
     try {
-      const response = await fetch(`/api/returns/${returnId}/finalize`, { method: 'POST' });
+      const response = await apiFetch(`/api/returns/${returnId}/finalize`, { method: 'POST' });
       const result = (await response.json()) as { item?: ReturnDetail; error?: string; details?: { blockingReasons?: string[] } };
       if (!response.ok || !result.item) throw new Error(result.details?.blockingReasons?.join(' ') || result.error || 'Não foi possível finalizar.');
       setDetail(result.item);
@@ -206,7 +209,7 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
   }
 
   async function refreshAfterVideoDeletion(count: number, storagePending: boolean) {
-    const response = await fetch(`/api/returns/${returnId}`);
+    const response = await apiFetch(`/api/returns/${returnId}`);
     const result = (await response.json()) as { item?: ReturnDetail; error?: string };
     if (!response.ok || !result.item) throw new Error(result.error || 'Os vídeos foram excluídos, mas não foi possível atualizar a tela.');
     setDetail(result.item);
@@ -241,6 +244,7 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
             <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail.store || 'Loja pendente'} · recebida em {formatDate(detail.received_at)}</p>
           </div>
           {!finalized && <div className="hidden items-center gap-2 md:flex"><span className="mr-2 text-xs text-muted-foreground">{form.formState.isDirty ? 'Alterações não salvas' : 'Tudo salvo'}</span><Button type="submit" variant="outline" className="h-10" disabled={form.formState.isSubmitting || finalizing}>{form.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <Save />} Salvar</Button><Button type="button" className="h-10" disabled={blockingReasons.length > 0 || form.formState.isDirty || finalizing} onClick={finalize}>{finalizing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Finalizar</Button></div>}
+          {!embedded && <UserMenu user={currentUser} />}
         </div>
         <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto border-t px-4 py-2 text-xs font-semibold text-muted-foreground sm:px-6" aria-label="Etapas da devolução">
           <Anchor href="#recebimento" label="1. Recebimento" />
@@ -253,7 +257,7 @@ export function ReturnWorkspace({ returnId, embedded = false, onClose }: { retur
 
       <main className={cn('mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)] lg:items-start lg:py-8', embedded && 'min-h-0 flex-1 overflow-y-auto')}>
         <aside className={cn('min-w-0 lg:sticky', embedded ? 'lg:top-3' : 'lg:top-32')}>
-          {detail.photos.length || detail.videos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80"><ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} videos={detail.videos} returnId={detail.id} finalized={finalized} onVideosDeleted={refreshAfterVideoDeletion} /></Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto ou vídeo recebido</p></div></Card>}
+          {detail.photos.length || detail.videos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80"><ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} videos={detail.videos} returnId={detail.id} finalized={finalized} canDeleteVideos={currentUser.role === 'ADMIN'} onVideosDeleted={refreshAfterVideoDeletion} /></Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto ou vídeo recebido</p></div></Card>}
         </aside>
 
         <div className="min-w-0 space-y-5">

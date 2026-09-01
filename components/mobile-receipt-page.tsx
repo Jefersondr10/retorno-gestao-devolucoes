@@ -25,6 +25,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
+import { UserMenu } from '@/components/user-menu';
+import { apiFetch } from '@/lib/api-client';
+import type { AuthUser } from '@/lib/auth';
 import { MAX_PHOTO_BYTES, normalizeImageFile } from '@/lib/client-images';
 import { formatVideoDuration, formatVideoSize, prepareVideoFile, type PreparedVideo } from '@/lib/client-video';
 import type { ConfigOptionsResponse, ReturnDetail } from '@/lib/returns';
@@ -59,7 +62,7 @@ function defaultFields(): ReceiptFields {
   };
 }
 
-export function MobileReceiptPage() {
+export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
   const cameraInput = useRef<HTMLInputElement>(null);
   const galleryInput = useRef<HTMLInputElement>(null);
   const videoCameraInput = useRef<HTMLInputElement>(null);
@@ -95,7 +98,7 @@ export function MobileReceiptPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/config/options')
+    apiFetch('/api/config/options')
       .then(async (response) => {
         const result = (await response.json()) as ConfigOptionsResponse;
         if (!response.ok) throw new Error('Não foi possível carregar locais e lojas.');
@@ -221,7 +224,7 @@ export function MobileReceiptPage() {
     }
 
     try {
-      const response = await fetch('/api/returns', { method: 'POST', body: payload });
+      const response = await apiFetch('/api/returns', { method: 'POST', body: payload });
       const result = (await response.json()) as {
         item?: ReturnDetail;
         duplicates?: Array<{ id: string; protocol: string }>;
@@ -294,7 +297,7 @@ export function MobileReceiptPage() {
             <h1 className="truncate text-base font-bold">Nova devolução</h1>
             <p className="truncate text-xs text-muted-foreground">Recebimento rápido por foto ou vídeo</p>
           </div>
-          <span className="ml-auto rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary">CELULAR</span>
+          <div className="ml-auto"><UserMenu user={currentUser} /></div>
         </div>
       </header>
 
