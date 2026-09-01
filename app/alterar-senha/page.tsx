@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 
 import { ChangePasswordForm } from '@/components/change-password-form';
 import { requirePageUser } from '@/lib/auth-page';
@@ -13,6 +14,6 @@ export const metadata: Metadata = {
 
 export default async function ChangePasswordPage() {
   const user = await requirePageUser({ allowPasswordChange: true });
+  if (!user.passwordLoginEnabled) redirect('/');
   return <ChangePasswordForm user={user} />;
 }
-

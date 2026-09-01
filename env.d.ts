@@ -7,5 +7,6 @@ declare namespace Cloudflare {
     AUTH_BOOTSTRAP_PASSWORD?: string;
     AUTH_PASSWORD_PEPPER?: string;
     APP_ORIGIN?: string;
+    GOOGLE_CLIENT_ID?: string;
   }
 }

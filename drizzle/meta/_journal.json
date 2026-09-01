@@ -36,6 +36,20 @@
       "when": 1788231835034,
       "tag": "0004_wandering_black_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788236298531,
+      "tag": "0005_cynical_amphibian",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788236848369,
+      "tag": "0006_brave_kitty_pryde",
+      "breakpoints": true
     }
   ]
 }

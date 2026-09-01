@@ -3,6 +3,7 @@ import { env } from 'cloudflare:workers';
 import { ensureSchema, getBindings } from '@/lib/data';
 
 export type UserRole = 'ADMIN' | 'OPERATOR';
+export type UserApprovalStatus = 'APPROVED' | 'PENDING' | 'REJECTED';
 
 export type AuthUser = {
   id: string;
@@ -10,6 +11,9 @@ export type AuthUser = {
   displayName: string;
   role: UserRole;
   active: boolean;
+  approvalStatus: UserApprovalStatus;
+  passwordLoginEnabled: boolean;
+  googleEmail: string | null;
   mustChangePassword: boolean;
   lastLoginAt: string | null;
 };
@@ -21,13 +25,17 @@ type SessionContext = {
   expiresAt: string;
 };
 
-type UserRecord = {
+export type UserRecord = {
   id: string;
   username: string;
   display_name: string;
+  google_sub: string | null;
+  google_email: string | null;
   password_hash: string;
   password_salt: string;
   password_iterations: number;
+  password_login_enabled: number;
+  approval_status: UserApprovalStatus;
   role: UserRole;
   active: number;
   must_change_password: number;
@@ -42,6 +50,7 @@ type AuthEnvironment = {
   AUTH_BOOTSTRAP_PASSWORD?: string;
   AUTH_PASSWORD_PEPPER?: string;
   APP_ORIGIN?: string;
+  GOOGLE_CLIENT_ID?: string;
 };
 
 const encoder = new TextEncoder();
@@ -52,6 +61,8 @@ const SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_ACCOUNT_MAX_ATTEMPTS = 8;
 const LOGIN_IP_MAX_ATTEMPTS = 30;
+const GOOGLE_CHALLENGE_IP_MAX_ATTEMPTS = 120;
+const GOOGLE_LOGIN_IP_MAX_ATTEMPTS = 40;
 const LOGIN_RATE_LIMIT_TTL_MS = 24 * 60 * 60 * 1000;
 const FAKE_SALT = `${PASSWORD_HASH_PREFIX}2eb3e19f632664d6b3ac96ad2ff32e2f`;
 
@@ -178,13 +189,16 @@ export async function verifyPassword(password: string, record: Pick<UserRecord, 
   }
 }
 
-function publicUser(record: Pick<UserRecord, 'id' | 'username' | 'display_name' | 'role' | 'active' | 'must_change_password' | 'last_login_at'>): AuthUser {
+export function authUserFromRecord(record: Pick<UserRecord, 'id' | 'username' | 'display_name' | 'role' | 'active' | 'approval_status' | 'password_login_enabled' | 'google_email' | 'must_change_password' | 'last_login_at'>): AuthUser {
   return {
     id: record.id,
     username: record.username,
     displayName: record.display_name,
     role: record.role,
     active: Boolean(record.active),
+    approvalStatus: record.approval_status,
+    passwordLoginEnabled: Boolean(record.password_login_enabled),
+    googleEmail: record.google_email,
     mustChangePassword: Boolean(record.must_change_password),
     lastLoginAt: record.last_login_at,
   };
@@ -227,10 +241,12 @@ export async function getSessionContextFromCookie(cookieHeader: string | null): 
     .prepare(
       `SELECT s.token_hash, s.csrf_hash, s.expires_at,
         u.id, u.username, u.display_name, u.role, u.active,
+        u.approval_status, u.password_login_enabled, u.google_email,
         u.must_change_password, u.last_login_at
        FROM auth_sessions s
        INNER JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1`,
+       WHERE s.token_hash = ? AND s.expires_at > ?
+         AND u.active = 1 AND u.approval_status = 'APPROVED'`,
     )
     .bind(tokenHash, now)
     .first<Record<string, unknown>>();
@@ -239,12 +255,15 @@ export async function getSessionContextFromCookie(cookieHeader: string | null): 
     tokenHash,
     csrfHash: String(record.csrf_hash),
     expiresAt: String(record.expires_at),
-    user: publicUser({
+    user: authUserFromRecord({
       id: String(record.id),
       username: String(record.username),
       display_name: String(record.display_name),
       role: record.role as UserRole,
       active: Number(record.active),
+      approval_status: record.approval_status as UserApprovalStatus,
+      password_login_enabled: Number(record.password_login_enabled),
+      google_email: typeof record.google_email === 'string' ? record.google_email : null,
       must_change_password: Number(record.must_change_password),
       last_login_at: typeof record.last_login_at === 'string' ? record.last_login_at : null,
     }),
@@ -292,11 +311,16 @@ export function appendClearedSessionCookies(headers: Headers, request: Request) 
 
 export async function createSession(userId: string) {
   await ensureSchema();
+  const { db } = getBindings();
+  const eligibleUser = await db
+    .prepare("SELECT id FROM users WHERE id = ? AND active = 1 AND approval_status = 'APPROVED'")
+    .bind(userId)
+    .first();
+  if (!eligibleUser) throw new Error('Usuário sem autorização para iniciar uma sessão.');
   const sessionToken = randomHex(32);
   const csrfToken = randomHex(24);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_MAX_AGE_SECONDS * 1000).toISOString();
-  const { db } = getBindings();
   await db
     .prepare(
       `INSERT INTO auth_sessions (token_hash, user_id, csrf_hash, expires_at, created_at, last_seen_at)
@@ -364,7 +388,11 @@ function requestAddress(request: Request) {
   return request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'local';
 }
 
-async function consumeLoginRateLimit(kind: 'ip' | 'account' | 'password-change', subject: string, maxAttempts: number): Promise<LoginRateLimitResult> {
+async function consumeLoginRateLimit(
+  kind: 'ip' | 'account' | 'password-change' | 'google-challenge' | 'google-login',
+  subject: string,
+  maxAttempts: number,
+): Promise<LoginRateLimitResult> {
   const { db } = getBindings();
   const subjectHash = await sha256(`${kind}|${subject}`);
   const now = new Date();
@@ -425,6 +453,25 @@ export async function consumePasswordChangeRateLimit(userId: string) {
   return consumeLoginRateLimit('password-change', userId, LOGIN_ACCOUNT_MAX_ATTEMPTS);
 }
 
+export async function consumeGoogleAuthRateLimit(request: Request, phase: 'challenge' | 'login') {
+  await ensureSchema();
+  const { db } = getBindings();
+  await db
+    .prepare('DELETE FROM auth_rate_limits WHERE updated_at <= ?')
+    .bind(new Date(Date.now() - LOGIN_RATE_LIMIT_TTL_MS).toISOString())
+    .run();
+  return consumeLoginRateLimit(
+    phase === 'challenge' ? 'google-challenge' : 'google-login',
+    requestAddress(request),
+    phase === 'challenge' ? GOOGLE_CHALLENGE_IP_MAX_ATTEMPTS : GOOGLE_LOGIN_IP_MAX_ATTEMPTS,
+  );
+}
+
+export async function clearGoogleAuthRateLimit(subjectHash: string) {
+  const { db } = getBindings();
+  await db.prepare('DELETE FROM auth_rate_limits WHERE subject_hash = ?').bind(subjectHash).run();
+}
+
 export async function userAuthenticationRateLimitHashes(userId: string) {
   return {
     account: await sha256(`account|${userId}`),
@@ -435,13 +482,25 @@ export async function userAuthenticationRateLimitHashes(userId: string) {
 export async function ensureBootstrapAdmin() {
   await ensureSchema();
   const { db } = getBindings();
-  const completed = await db.prepare('SELECT id FROM auth_bootstrap WHERE id = 1').first();
+  const completed = await db
+    .prepare(
+      `SELECT b.id
+       FROM auth_bootstrap b
+       INNER JOIN users u ON u.id = b.admin_user_id
+       WHERE b.id = 1 AND u.role = 'ADMIN' AND u.active = 1 AND u.approval_status = 'APPROVED'`,
+    )
+    .first();
   if (completed) return true;
 
-  const existingAdmin = await db.prepare("SELECT id FROM users WHERE role = 'ADMIN' ORDER BY created_at LIMIT 1").first<{ id: string }>();
+  const existingAdmin = await db
+    .prepare("SELECT id FROM users WHERE role = 'ADMIN' AND active = 1 AND approval_status = 'APPROVED' ORDER BY created_at LIMIT 1")
+    .first<{ id: string }>();
   if (existingAdmin) {
     await db
-      .prepare('INSERT OR IGNORE INTO auth_bootstrap (id, completed_at, admin_user_id) VALUES (1, ?, ?)')
+      .prepare(
+        `INSERT INTO auth_bootstrap (id, completed_at, admin_user_id) VALUES (1, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET completed_at = excluded.completed_at, admin_user_id = excluded.admin_user_id`,
+      )
       .bind(new Date().toISOString(), existingAdmin.id)
       .run();
     return true;
@@ -466,13 +525,25 @@ export async function ensureBootstrapAdmin() {
            VALUES (?, ?, ?, ?, ?, ?, 'ADMIN', 1, 1, 0, ?, ?)`,
         )
         .bind(id, username, displayName, passwordData.hash, passwordData.salt, passwordData.iterations, now, now),
-      db.prepare('INSERT INTO auth_bootstrap (id, completed_at, admin_user_id) VALUES (1, ?, ?)').bind(now, id),
+      db
+        .prepare(
+          `INSERT INTO auth_bootstrap (id, completed_at, admin_user_id) VALUES (1, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET completed_at = excluded.completed_at, admin_user_id = excluded.admin_user_id`,
+        )
+        .bind(now, id),
       db
         .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'BOOTSTRAP_ADMIN', ?, ?)")
         .bind(crypto.randomUUID(), `${displayName} (${username})`, JSON.stringify({ userId: id, username }), now),
     ]);
   } catch (error) {
-    const winner = await db.prepare('SELECT id FROM auth_bootstrap WHERE id = 1').first();
+    const winner = await db
+      .prepare(
+        `SELECT b.id
+         FROM auth_bootstrap b
+         INNER JOIN users u ON u.id = b.admin_user_id
+         WHERE b.id = 1 AND u.role = 'ADMIN' AND u.active = 1 AND u.approval_status = 'APPROVED'`,
+      )
+      .first();
     if (!winner) throw error;
   }
   return true;
@@ -501,11 +572,17 @@ export async function login(request: Request, usernameInput: string, password: s
   if (accountRateLimit && !accountRateLimit.allowed) {
     return { error: 'Muitas tentativas. Aguarde 15 minutos e tente novamente.', status: 429, code: 'RATE_LIMITED' } as const;
   }
-  const passwordMatches = user
+  const passwordMatches = user?.password_login_enabled
     ? await verifyPassword(password, user)
     : constantTimeEqual(await derivePasswordHash(password || 'senha-invalida', FAKE_SALT, PASSWORD_ITERATIONS), '0'.repeat(64));
 
-  if (!user || !user.active || !passwordMatches) {
+  if (
+    !user
+    || !user.active
+    || user.approval_status !== 'APPROVED'
+    || !user.password_login_enabled
+    || !passwordMatches
+  ) {
     if (user) {
       await db
         .prepare('UPDATE users SET failed_attempts = failed_attempts + 1, locked_until = ?, updated_at = ? WHERE id = ?')
@@ -535,7 +612,7 @@ export async function login(request: Request, usernameInput: string, password: s
   }
   await db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').bind(loggedInAt).run();
   const session = await createSession(user.id);
-  const authenticatedUser = publicUser({ ...user, last_login_at: loggedInAt });
+  const authenticatedUser = authUserFromRecord({ ...user, last_login_at: loggedInAt });
   await db
     .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'LOGIN', ?, ?)")
     .bind(crypto.randomUUID(), actorLabel(authenticatedUser), JSON.stringify({ userId: user.id }), loggedInAt)

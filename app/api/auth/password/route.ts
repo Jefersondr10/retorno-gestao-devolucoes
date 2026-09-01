@@ -46,7 +46,9 @@ export async function POST(request: Request) {
 
   const { db } = getBindings();
   const current = await db
-    .prepare('SELECT password_hash, password_salt, password_iterations FROM users WHERE id = ? AND active = 1')
+    .prepare(`SELECT password_hash, password_salt, password_iterations
+      FROM users
+      WHERE id = ? AND active = 1 AND approval_status = 'APPROVED' AND password_login_enabled = 1`)
     .bind(auth.user.id)
     .first<{ password_hash: string; password_salt: string; password_iterations: number }>();
   const passwordRateLimit = await consumePasswordChangeRateLimit(auth.user.id);

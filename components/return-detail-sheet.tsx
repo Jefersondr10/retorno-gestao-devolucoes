@@ -171,6 +171,7 @@ export function ReturnDetailSheet({ open, returnId, statuses, onOpenChange, onCh
         const date = new Date(data.receivedAt);
         return Number.isNaN(date.getTime()) ? data.receivedAt : date.toISOString();
       })(),
+      expectedUpdatedAt: detail?.updated_at,
     };
     try {
       const response = await apiFetch(`/api/returns/${returnId}`, {
@@ -194,7 +195,11 @@ export function ReturnDetailSheet({ open, returnId, statuses, onOpenChange, onCh
     setFinalizing(true);
     setServerError('');
     try {
-      const response = await apiFetch(`/api/returns/${returnId}/finalize`, { method: 'POST' });
+      const response = await apiFetch(`/api/returns/${returnId}/finalize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedUpdatedAt: detail.updated_at }),
+      });
       const result = (await response.json()) as { item?: ReturnDetail; error?: string; details?: { blockingReasons?: string[] } };
       if (!response.ok || !result.item) {
         throw new Error(result.details?.blockingReasons?.join(' ') || result.error || 'Não foi possível finalizar.');

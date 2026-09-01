@@ -19,8 +19,12 @@ export async function GET(request: Request) {
   const result = await db
     .prepare(
       `SELECT id, username, display_name, role, active, must_change_password,
-        last_login_at, created_at, updated_at
-       FROM users ORDER BY active DESC, display_name COLLATE NOCASE`,
+        last_login_at, created_at, updated_at, approval_status, google_email,
+        password_login_enabled,
+        CASE WHEN google_sub IS NULL THEN 'PASSWORD' ELSE 'GOOGLE' END AS provider
+       FROM users
+       ORDER BY CASE approval_status WHEN 'PENDING' THEN 0 WHEN 'APPROVED' THEN 1 ELSE 2 END,
+         active DESC, display_name COLLATE NOCASE`,
     )
     .all();
   return Response.json({ items: result.results }, { headers: { 'Cache-Control': 'no-store' } });
@@ -73,7 +77,23 @@ export async function POST(request: Request) {
       .bind(crypto.randomUUID(), actorLabel(auth.user), JSON.stringify({ userId: id, username, displayName, role }), now),
   ]);
   return Response.json(
-    { item: { id, username, display_name: displayName, role, active: 1, must_change_password: 1, last_login_at: null, created_at: now, updated_at: now } },
+    {
+      item: {
+        id,
+        username,
+        display_name: displayName,
+        role,
+        active: 1,
+        must_change_password: 1,
+        last_login_at: null,
+        created_at: now,
+        updated_at: now,
+        approval_status: 'APPROVED',
+        google_email: null,
+        password_login_enabled: 1,
+        provider: 'PASSWORD',
+      },
+    },
     { status: 201, headers: { 'Cache-Control': 'no-store' } },
   );
 }

@@ -5,6 +5,7 @@ export function proxy(request: NextRequest) {
     ? NextResponse.redirect(new URL(`${request.nextUrl.pathname}${request.nextUrl.search}`, 'https://devolucoes.nucleodeoperacao.com.br'))
     : NextResponse.next();
   response.headers.set('Cache-Control', 'private, no-store');
+  response.headers.set('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
   response.headers.set('Content-Security-Policy', "base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
   response.headers.set('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
   response.headers.set('Referrer-Policy', 'same-origin');

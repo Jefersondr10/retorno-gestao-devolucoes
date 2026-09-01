@@ -35,9 +35,25 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
   const { db } = getBindings();
   const current = await db
-    .prepare('SELECT id, username, display_name, role, active, must_change_password, updated_at FROM users WHERE id = ?')
+    .prepare(`SELECT id, username, display_name, role, active, must_change_password, updated_at,
+      approval_status, password_login_enabled,
+      CASE WHEN google_sub IS NULL THEN 'PASSWORD' ELSE 'GOOGLE' END AS provider,
+      google_email
+      FROM users WHERE id = ?`)
     .bind(id)
-    .first<{ id: string; username: string; display_name: string; role: UserRole; active: number; must_change_password: number; updated_at: string }>();
+    .first<{
+      id: string;
+      username: string;
+      display_name: string;
+      role: UserRole;
+      active: number;
+      must_change_password: number;
+      updated_at: string;
+      approval_status: 'PENDING' | 'APPROVED' | 'REJECTED';
+      password_login_enabled: number;
+      provider: 'PASSWORD' | 'GOOGLE';
+      google_email: string | null;
+    }>();
   if (!current) return Response.json({ error: 'Usuário não encontrado.' }, { status: 404 });
 
   const displayName = body.displayName === undefined ? current.display_name : body.displayName.trim();
@@ -49,6 +65,12 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (id === auth.user.id && role !== current.role) return Response.json({ error: 'Outro administrador deve alterar o seu perfil.' }, { status: 409 });
 
   const temporaryPassword = body.temporaryPassword || '';
+  if (current.approval_status !== 'APPROVED' && (body.role !== undefined || body.active !== undefined || temporaryPassword)) {
+    return Response.json({ error: 'Aprove ou recuse esta solicitação antes de editar o acesso.' }, { status: 409 });
+  }
+  if (temporaryPassword && current.password_login_enabled !== 1) {
+    return Response.json({ error: 'Esta conta usa somente o login do Google e não possui senha local.' }, { status: 409 });
+  }
   if (id === auth.user.id && temporaryPassword) {
     return Response.json({ error: 'Use “Trocar minha senha” no menu da sua conta.' }, { status: 409 });
   }
@@ -62,10 +84,12 @@ export async function PATCH(request: Request, context: RouteContext) {
   const adminGuard = `AND (
     users.role <> 'ADMIN'
     OR users.active <> 1
+    OR users.approval_status <> 'APPROVED'
     OR (? = 'ADMIN' AND ? = 1)
     OR EXISTS (
       SELECT 1 FROM users AS other
       WHERE other.id <> users.id AND other.role = 'ADMIN' AND other.active = 1
+        AND other.approval_status = 'APPROVED'
     )
   )`;
   const updateStatement = password
@@ -133,9 +157,24 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
   }
   const updated = await db
-    .prepare('SELECT id, username, display_name, role, active, must_change_password, updated_at FROM users WHERE id = ?')
+    .prepare(`SELECT id, username, display_name, role, active, must_change_password, updated_at,
+      approval_status, google_email, password_login_enabled,
+      CASE WHEN google_sub IS NULL THEN 'PASSWORD' ELSE 'GOOGLE' END AS provider
+      FROM users WHERE id = ?`)
     .bind(id)
-    .first<{ id: string; username: string; display_name: string; role: UserRole; active: number; must_change_password: number; updated_at: string }>();
+    .first<{
+      id: string;
+      username: string;
+      display_name: string;
+      role: UserRole;
+      active: number;
+      must_change_password: number;
+      updated_at: string;
+      approval_status: 'PENDING' | 'APPROVED' | 'REJECTED';
+      google_email: string | null;
+      password_login_enabled: number;
+      provider: 'PASSWORD' | 'GOOGLE';
+    }>();
   if (!updated) return Response.json({ error: 'Usuário não encontrado.' }, { status: 404 });
   return Response.json({
     item: updated,

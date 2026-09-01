@@ -33,9 +33,13 @@ const statements = [
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
+    google_sub TEXT,
+    google_email TEXT,
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
     password_iterations INTEGER NOT NULL,
+    password_login_enabled INTEGER NOT NULL DEFAULT 1,
+    approval_status TEXT NOT NULL DEFAULT 'APPROVED',
     role TEXT NOT NULL DEFAULT 'OPERATOR',
     active INTEGER NOT NULL DEFAULT 1,
     must_change_password INTEGER NOT NULL DEFAULT 1,
@@ -81,6 +85,11 @@ const statements = [
     window_started_at TEXT NOT NULL,
     blocked_until TEXT,
     updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS auth_google_nonces (
+    nonce_hash TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS auth_bootstrap (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -161,6 +170,9 @@ const statements = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_config_options_type_label ON config_options(type, label)`,
   `CREATE INDEX IF NOT EXISTS idx_config_options_type_active ON config_options(type, active, sort_order)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_google_email ON users(google_email)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_approval_status ON users(approval_status, active)`,
   `CREATE INDEX IF NOT EXISTS idx_users_active_role ON users(active, role)`,
   `CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at)`,
@@ -283,7 +295,7 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
       .bind(id)
       .all(),
     db
-      .prepare("SELECT code, requires_invoice, requires_notes FROM config_options WHERE type = 'CONDITION' AND active = 1")
+      .prepare("SELECT code, requires_invoice, requires_notes FROM config_options WHERE type = 'CONDITION'")
       .all<{ code: string; requires_invoice: number; requires_notes: number }>(),
   ]);
 
@@ -302,6 +314,13 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
     invoiceExemptConditionsResult.results.filter((condition) => condition.requires_invoice === 0).map((condition) => condition.code),
     invoiceExemptConditionsResult.results.filter((condition) => condition.requires_notes === 1).map((condition) => condition.code),
   );
+  const validConditionCodes = new Set(invoiceExemptConditionsResult.results.map((condition) => condition.code));
+  for (const product of detail.items) {
+    if (product.condition && !validConditionCodes.has(product.condition)) {
+      detail.blockingReasons.push(`${product.product}: selecione uma condição válida.`);
+    }
+  }
+  detail.blockingReasons = [...new Set(detail.blockingReasons)];
   detail.canFinalize = detail.blockingReasons.length === 0 && detail.status !== 'FINALIZED';
   return detail;
 }

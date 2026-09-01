@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -43,9 +44,11 @@ export function UserMenu({ user }: { user: AuthUser }) {
         <span className="hidden min-w-0 sm:block"><span className="block max-w-32 truncate text-xs font-semibold">{user.displayName}</span><span className="block text-[10px] uppercase tracking-wide text-muted-foreground">{user.role === 'ADMIN' ? 'Administrador' : 'Operação'}</span></span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64 rounded-xl p-2">
-        <DropdownMenuLabel className="px-2 py-2"><span className="block truncate text-sm font-semibold text-foreground">{user.displayName}</span><span className="mt-0.5 block truncate font-normal text-muted-foreground">@{user.username}</span></DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="px-2 py-2"><span className="block truncate text-sm font-semibold text-foreground">{user.displayName}</span><span className="mt-0.5 block truncate font-normal text-muted-foreground">@{user.username}</span></DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => window.location.assign('/alterar-senha')}><KeyRound /> Trocar minha senha</DropdownMenuItem>
+        {user.passwordLoginEnabled && <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => window.location.assign('/alterar-senha')}><KeyRound /> Trocar minha senha</DropdownMenuItem>}
         {user.role === 'ADMIN' && <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => window.location.assign('/configuracoes')}><ShieldCheck /> Administração</DropdownMenuItem>}
         <DropdownMenuSeparator />
         {logoutError && <p className="px-2 pb-2 text-xs leading-5 text-destructive" role="alert">{logoutError}</p>}

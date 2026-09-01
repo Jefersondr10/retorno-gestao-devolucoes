@@ -7,6 +7,11 @@ export const dynamic = 'force-dynamic';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+function nextMutationTimestamp(previous: string) {
+  const previousTime = Date.parse(previous);
+  return new Date(Math.max(Date.now(), Number.isNaN(previousTime) ? 0 : previousTime + 1)).toISOString();
+}
+
 function queuedObjectKeys(details: string | null) {
   try {
     const parsed = JSON.parse(details || '{}') as { objectKeys?: unknown };
@@ -42,7 +47,14 @@ export async function PATCH(request: Request, context: RouteContext) {
       return apiError('Esta devolução já foi finalizada e está bloqueada para edição.', 409);
     }
 
-    const parsed = updateReturnSchema.safeParse(await request.json());
+    const requestBody = await request.json().catch(() => null) as unknown;
+    const expectedUpdatedAt = requestBody && typeof requestBody === 'object' && !Array.isArray(requestBody)
+      ? (requestBody as { expectedUpdatedAt?: unknown }).expectedUpdatedAt
+      : undefined;
+    if (typeof expectedUpdatedAt !== 'string' || expectedUpdatedAt !== current.updated_at) {
+      return apiError('Esta devolução foi alterada por outra pessoa. Atualize a tela antes de salvar.', 409);
+    }
+    const parsed = updateReturnSchema.safeParse(requestBody);
     if (!parsed.success) return apiError('Confira os campos informados.', 422, parsed.error.issues);
     const data = parsed.data;
     if (data.status === 'FINALIZED') {
@@ -57,12 +69,22 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (!statusDefinition) return apiError('Selecione um status válido.', 422);
 
     const conditionPolicies = await db
-      .prepare("SELECT code, requires_invoice, requires_notes FROM config_options WHERE type = 'CONDITION' AND active = 1")
-      .all<{ code: string; requires_invoice: number; requires_notes: number }>();
+      .prepare("SELECT code, active, requires_invoice, requires_notes FROM config_options WHERE type = 'CONDITION'")
+      .all<{ code: string; active: number; requires_invoice: number; requires_notes: number }>();
+    const conditionDefinitions = new Map(conditionPolicies.results.map((condition) => [condition.code, condition]));
+    const currentConditionCodes = new Set(current.items.map((item) => item.condition).filter((code): code is string => Boolean(code)));
+    for (const product of data.items) {
+      if (!product.condition) continue;
+      const definition = conditionDefinitions.get(product.condition);
+      if (!definition || (!definition.active && !currentConditionCodes.has(product.condition))) {
+        return apiError(`${product.product}: selecione uma condição válida.`, 422);
+      }
+    }
 
     let nextStatus = data.status;
     const preliminaryReasons = getBlockingReasons({
       store: data.store,
+      received_location: data.receivedLocation,
       received_at: data.receivedAt,
       order_id: data.orderId,
       tracking_code: data.trackingCode,
@@ -74,6 +96,7 @@ export async function PATCH(request: Request, context: RouteContext) {
         condition: item.condition,
         condition_notes: item.conditionNotes,
         destination: item.destination,
+        test_result: item.testResult,
       })),
     },
     conditionPolicies.results.filter((condition) => condition.requires_invoice === 0).map((condition) => condition.code),
@@ -81,7 +104,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (data.status === 'WAITING_ENTRY' && preliminaryReasons.length === 0) nextStatus = 'READY';
 
     const actor = actorLabel(auth.user);
-    const now = new Date().toISOString();
+    const now = nextMutationTimestamp(current.updated_at);
     const operations: D1PreparedStatement[] = [
       db
         .prepare(
@@ -89,7 +112,7 @@ export async function PATCH(request: Request, context: RouteContext) {
             store = ?, received_location = ?, received_at = ?, order_id = ?,
             tracking_code = ?, status = ?, notes = ?, invoice_number = ?,
             invoice_date = ?, updated_by = ?, updated_at = ?
-           WHERE id = ?`,
+           WHERE id = ? AND status <> 'FINALIZED' AND updated_at = ?`,
         )
         .bind(
           data.store,
@@ -104,8 +127,11 @@ export async function PATCH(request: Request, context: RouteContext) {
           actor,
           now,
           id,
+          current.updated_at,
         ),
-      db.prepare('DELETE FROM return_items WHERE return_id = ?').bind(id),
+      db.prepare(`DELETE FROM return_items
+        WHERE return_id = ? AND EXISTS (SELECT 1 FROM returns WHERE id = ? AND updated_at = ?)`)
+        .bind(id, id, now),
     ];
 
     for (const item of data.items) {
@@ -115,7 +141,9 @@ export async function PATCH(request: Request, context: RouteContext) {
             `INSERT INTO return_items (
               id, return_id, product, sku, quantity, condition,
               condition_notes, destination, test_result, notes
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE EXISTS (SELECT 1 FROM returns WHERE id = ? AND updated_at = ?)`,
           )
           .bind(
             item.id || crypto.randomUUID(),
@@ -128,6 +156,8 @@ export async function PATCH(request: Request, context: RouteContext) {
             item.destination || null,
             item.testResult || null,
             item.notes || null,
+            id,
+            now,
           ),
       );
     }
@@ -136,7 +166,8 @@ export async function PATCH(request: Request, context: RouteContext) {
       db
         .prepare(
           `INSERT INTO audit_events (id, return_id, actor, action, details, created_at)
-           VALUES (?, ?, ?, 'UPDATED', ?, ?)`,
+           SELECT ?, ?, ?, 'UPDATED', ?, ?
+           WHERE EXISTS (SELECT 1 FROM returns WHERE id = ? AND updated_at = ?)`,
         )
         .bind(
           crypto.randomUUID(),
@@ -144,10 +175,15 @@ export async function PATCH(request: Request, context: RouteContext) {
           actor,
           JSON.stringify({ previousStatus: current.status, status: nextStatus, itemCount: data.items.length, invoiceNumber: data.invoiceNumber || null }),
           now,
+          id,
+          now,
         ),
     );
 
-    await db.batch(operations);
+    const [updateResult] = await db.batch(operations);
+    if (!Number(updateResult.meta.changes || 0)) {
+      return apiError('Esta devolução foi alterada por outra pessoa. Atualize a tela antes de salvar.', 409);
+    }
     return Response.json({ item: await getReturnDetail(id) });
   } catch (error) {
     console.error(error);

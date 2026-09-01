@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Entrar · Retorno',
-  description: 'Acesso ao sistema de gestão de devoluções.',
+  description: 'Acesso ao sistema de gestão de devoluções com usuário ou conta Google.',
   robots: { index: false, follow: false },
 };
 
@@ -20,4 +20,3 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (user) redirect(user.mustChangePassword ? '/alterar-senha' : destination);
   return <LoginForm returnTo={destination} />;
 }
-

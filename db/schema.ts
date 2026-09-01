@@ -46,9 +46,13 @@ export const users = sqliteTable(
     id: text('id').primaryKey(),
     username: text('username').notNull(),
     displayName: text('display_name').notNull(),
+    googleSub: text('google_sub'),
+    googleEmail: text('google_email'),
     passwordHash: text('password_hash').notNull(),
     passwordSalt: text('password_salt').notNull(),
     passwordIterations: integer('password_iterations').notNull(),
+    passwordLoginEnabled: integer('password_login_enabled', { mode: 'boolean' }).notNull().default(true),
+    approvalStatus: text('approval_status').notNull().default('APPROVED'),
     role: text('role').notNull().default('OPERATOR'),
     active: integer('active', { mode: 'boolean' }).notNull().default(true),
     mustChangePassword: integer('must_change_password', { mode: 'boolean' }).notNull().default(true),
@@ -60,6 +64,9 @@ export const users = sqliteTable(
   },
   (table) => [
     uniqueIndex('idx_users_username').on(table.username),
+    uniqueIndex('idx_users_google_sub').on(table.googleSub),
+    index('idx_users_google_email').on(table.googleEmail),
+    index('idx_users_approval_status').on(table.approvalStatus, table.active),
     index('idx_users_active_role').on(table.active, table.role),
     check('users_role_check', sql`${table.role} IN ('ADMIN', 'OPERATOR')`),
   ],
@@ -89,6 +96,12 @@ export const authRateLimits = sqliteTable('auth_rate_limits', {
   windowStartedAt: text('window_started_at').notNull(),
   blockedUntil: text('blocked_until'),
   updatedAt: text('updated_at').notNull(),
+});
+
+export const authGoogleNonces = sqliteTable('auth_google_nonces', {
+  nonceHash: text('nonce_hash').primaryKey(),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').notNull(),
 });
 
 export const authBootstrap = sqliteTable(

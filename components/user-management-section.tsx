@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, type SyntheticEvent } from 'react';
-import { AlertCircle, Check, Copy, KeyRound, Loader2, Plus, Power, RefreshCw, ShieldCheck, UserRound } from 'lucide-react';
+import { AlertCircle, Check, CircleCheck, CircleX, Copy, KeyRound, Loader2, Mail, Plus, Power, RefreshCw, ShieldCheck, UserRound } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +23,10 @@ type ManagedUser = {
   last_login_at: string | null;
   created_at: string;
   updated_at: string;
+  approval_status?: 'APPROVED' | 'PENDING' | 'REJECTED';
+  provider?: 'GOOGLE' | 'PASSWORD';
+  google_email?: string | null;
+  password_login_enabled?: number | boolean;
 };
 
 export function UserManagementSection({ currentUser }: { currentUser: AuthUser }) {
@@ -106,6 +110,27 @@ export function UserManagementSection({ currentUser }: { currentUser: AuthUser }
     }
   }
 
+  async function decideGoogleApproval(user: ManagedUser, decision: 'APPROVE' | 'REJECT') {
+    if (decision === 'REJECT' && !window.confirm(`Recusar a solicitação de acesso de “${user.display_name}”?`)) return;
+    setSaving(`${decision}:${user.id}`);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/admin/users/${user.id}/approval`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      const result = (await response.json().catch(() => ({}))) as { item?: ManagedUser; error?: string };
+      if (!response.ok) throw new Error(result.error || 'Não foi possível responder à solicitação.');
+      setNotice(decision === 'APPROVE' ? `Acesso de “${user.display_name}” aprovado.` : `Solicitação de “${user.display_name}” recusada.`);
+      await loadUsers();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível responder à solicitação.');
+    } finally {
+      setSaving('');
+    }
+  }
+
   async function toggleUser(user: ManagedUser) {
     const nextActive = !user.active;
     if (!window.confirm(`${nextActive ? 'Reativar' : 'Inativar'} o acesso de “${user.display_name}”?${nextActive ? '' : ' As sessões abertas serão encerradas.'}`)) return;
@@ -134,10 +159,35 @@ export function UserManagementSection({ currentUser }: { currentUser: AuthUser }
 
   if (loading) return <div className="grid min-h-40 place-items-center"><Loader2 className="size-6 animate-spin text-primary" /></div>;
 
+  const pendingUsers = users.filter((user) => approvalStatus(user) === 'PENDING');
+  const approvedOrRejectedUsers = users.filter((user) => approvalStatus(user) !== 'PENDING');
+
   return (
     <div>
+      {pendingUsers.length > 0 && (
+        <section className="mb-5 rounded-2xl border border-amber-200 bg-amber-50/80 p-4 sm:p-5" aria-labelledby="pending-google-users">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-800"><Mail className="size-5" /></span>
+              <div><div className="flex flex-wrap items-center gap-2"><h3 id="pending-google-users" className="text-sm font-bold text-amber-950">Solicitações pelo Google</h3><Badge className="border-amber-300 bg-amber-100 text-amber-900">{pendingUsers.length} aguardando</Badge></div><p className="mt-1 text-xs leading-5 text-amber-900/80">Confira quem pediu acesso. Ao aprovar, a pessoa entra com perfil de Operação e você pode alterar a permissão depois.</p></div>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3">
+            {pendingUsers.map((user) => {
+              const deciding = saving === `APPROVE:${user.id}` || saving === `REJECT:${user.id}`;
+              return (
+                <article key={user.id} className="flex flex-col gap-4 rounded-xl border border-amber-200 bg-card p-4 lg:flex-row lg:items-center">
+                  <div className="flex min-w-0 flex-1 items-start gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-blue-50 font-bold text-blue-700">G</span><div className="min-w-0"><h4 className="truncate text-sm font-bold">{user.display_name}</h4><p className="mt-1 break-all text-xs text-muted-foreground">{user.google_email || `@${user.username}`}</p><p className="mt-1 text-[11px] text-muted-foreground">Solicitado em {formatDate(user.created_at)}</p></div></div>
+                  <div className="flex flex-wrap gap-2"><Button type="button" size="sm" className="h-10" disabled={deciding} onClick={() => void decideGoogleApproval(user, 'APPROVE')}>{saving === `APPROVE:${user.id}` ? <Loader2 className="animate-spin" /> : <CircleCheck />} Aprovar acesso</Button><Button type="button" size="sm" variant="outline" className="h-10 text-destructive" disabled={deciding} onClick={() => void decideGoogleApproval(user, 'REJECT')}>{saving === `REJECT:${user.id}` ? <Loader2 className="animate-spin" /> : <CircleX />} Recusar</Button></div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       <form onSubmit={createUser} className="rounded-2xl border bg-muted/20 p-4 sm:p-5">
-        <div className="mb-4"><h3 className="text-sm font-bold">Criar novo acesso</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">O usuário entrará com a senha temporária e será obrigado a trocá-la.</p></div>
+        <div className="mb-4"><h3 className="text-sm font-bold">Criar acesso com usuário e senha</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">O usuário entrará com a senha temporária e será obrigado a trocá-la. Pedidos feitos pelo Google aparecem acima para aprovação.</p></div>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Field id="user-name" label="Nome da pessoa"><Input id="user-name" className="h-11" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Ex.: Maria Silva" maxLength={100} required /></Field>
           <Field id="user-username" label="Usuário"><Input id="user-username" className="h-11 lowercase" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} placeholder="Ex.: maria.silva" autoCapitalize="none" spellCheck={false} maxLength={64} required /></Field>
@@ -152,16 +202,19 @@ export function UserManagementSection({ currentUser }: { currentUser: AuthUser }
       {createdCredential && <Alert className="mt-4 border-primary/25 bg-primary/5"><KeyRound /><AlertTitle>Guarde este acesso temporário</AlertTitle><AlertDescription><p>Envie por um canal seguro. A senha será trocada no primeiro acesso.</p><div className="mt-3 flex flex-col gap-2 rounded-xl border bg-card p-3 font-mono text-xs sm:flex-row sm:items-center"><span className="min-w-0 flex-1 break-all">Usuário: {createdCredential.username}<br />Senha: {createdCredential.password}</span><Button type="button" variant="outline" size="sm" className="h-10 shrink-0" onClick={() => void copyPassword(`Usuário: ${createdCredential.username}\nSenha: ${createdCredential.password}`)}>{copied ? <Check /> : <Copy />} Copiar acesso</Button><Button type="button" variant="ghost" size="sm" className="h-10 shrink-0" onClick={() => setCreatedCredential(null)}>Ocultar</Button></div></AlertDescription></Alert>}
 
       <div className="mt-5 grid gap-3">
-        {users.map((user) => {
+        {approvedOrRejectedUsers.map((user) => {
           const isCurrent = user.id === currentUser.id;
+          const googleAccount = provider(user) === 'GOOGLE';
+          const passwordEnabled = passwordLoginEnabled(user);
+          const rejected = approvalStatus(user) === 'REJECTED';
           return (
             <article key={user.id} className={`flex flex-col gap-4 rounded-2xl border p-4 lg:flex-row lg:items-center ${user.active ? 'bg-card' : 'border-dashed bg-muted/35'}`}>
-              <div className="flex min-w-0 flex-1 items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><UserRound className="size-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate text-sm font-bold">{user.display_name}</h3>{isCurrent && <Badge variant="outline">Você</Badge>}<Badge variant={user.active ? 'secondary' : 'outline'}>{user.active ? 'Ativo' : 'Inativo'}</Badge>{user.must_change_password ? <Badge className="border-amber-200 bg-amber-50 text-amber-800">Troca de senha pendente</Badge> : null}</div><p className="mt-1 text-xs text-muted-foreground">@{user.username} · último acesso: {user.last_login_at ? formatDate(user.last_login_at) : 'ainda não acessou'}</p></div></div>
+              <div className="flex min-w-0 flex-1 items-start gap-3"><span className={`grid size-11 shrink-0 place-items-center rounded-xl ${googleAccount ? 'bg-blue-50 font-bold text-blue-700' : 'bg-primary/10 text-primary'}`}>{googleAccount ? 'G' : <UserRound className="size-5" />}</span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate text-sm font-bold">{user.display_name}</h3>{isCurrent && <Badge variant="outline">Você</Badge>}<Badge variant="outline">{googleAccount ? 'Google' : 'Usuário e senha'}</Badge>{rejected ? <Badge className="border-red-200 bg-red-50 text-red-800">Solicitação recusada</Badge> : <Badge variant={user.active ? 'secondary' : 'outline'}>{user.active ? 'Ativo' : 'Inativo'}</Badge>}{passwordEnabled && user.must_change_password ? <Badge className="border-amber-200 bg-amber-50 text-amber-800">Troca de senha pendente</Badge> : null}</div><p className="mt-1 break-all text-xs text-muted-foreground">{googleAccount && user.google_email ? user.google_email : `@${user.username}`} · último acesso: {user.last_login_at ? formatDate(user.last_login_at) : 'ainda não acessou'}</p></div></div>
               <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-40"><Label htmlFor={`role-${user.id}`} className="sr-only">Perfil de {user.display_name}</Label><NativeSelect id={`role-${user.id}`} className="w-full" value={user.role} disabled={saving === user.id || isCurrent} onChange={(event) => void updateUser(user, { role: event.target.value as UserRole })}><NativeSelectOption value="OPERATOR">Operação</NativeSelectOption><NativeSelectOption value="ADMIN">Administrador</NativeSelectOption></NativeSelect></div>
-                <Button type="button" size="sm" variant="outline" className="h-11" disabled={saving === user.id || isCurrent} onClick={() => { setResetTarget(user); setResetPassword(generateTemporaryPassword()); setResetCredential(null); }}><KeyRound /> Redefinir senha</Button>
-                <Button type="button" size="sm" variant="outline" className="h-11" disabled={saving === user.id || isCurrent} title={isCurrent ? 'Você não pode inativar a própria conta' : undefined} onClick={() => void toggleUser(user)}>{saving === user.id ? <Loader2 className="animate-spin" /> : <Power />} {user.active ? 'Inativar' : 'Reativar'}</Button>
-                {isCurrent && <p className="basis-full text-xs leading-5 text-muted-foreground">Para sua conta, use “Trocar minha senha” no menu superior. Outro administrador controla seu perfil.</p>}
+                {rejected ? <Button type="button" size="sm" className="h-11" disabled={saving === `APPROVE:${user.id}`} onClick={() => void decideGoogleApproval(user, 'APPROVE')}>{saving === `APPROVE:${user.id}` ? <Loader2 className="animate-spin" /> : <CircleCheck />} Aprovar acesso</Button> : <><div className="min-w-40"><Label htmlFor={`role-${user.id}`} className="sr-only">Perfil de {user.display_name}</Label><NativeSelect id={`role-${user.id}`} className="w-full" value={user.role} disabled={saving === user.id || isCurrent} onChange={(event) => void updateUser(user, { role: event.target.value as UserRole })}><NativeSelectOption value="OPERATOR">Operação</NativeSelectOption><NativeSelectOption value="ADMIN">Administrador</NativeSelectOption></NativeSelect></div>
+                {passwordEnabled && <Button type="button" size="sm" variant="outline" className="h-11" disabled={saving === user.id || isCurrent} onClick={() => { setResetTarget(user); setResetPassword(generateTemporaryPassword()); setResetCredential(null); }}><KeyRound /> Redefinir senha</Button>}
+                <Button type="button" size="sm" variant="outline" className="h-11" disabled={saving === user.id || isCurrent} title={isCurrent ? 'Você não pode inativar a própria conta' : undefined} onClick={() => void toggleUser(user)}>{saving === user.id ? <Loader2 className="animate-spin" /> : <Power />} {user.active ? 'Inativar' : 'Reativar'}</Button></>}
+                {isCurrent && <p className="basis-full text-xs leading-5 text-muted-foreground">{passwordEnabled ? 'Para sua conta, use “Trocar minha senha” no menu superior. Outro administrador controla seu perfil.' : 'Sua conta usa somente o Google e não possui senha local. Outro administrador controla seu perfil.'}</p>}
               </div>
             </article>
           );
@@ -198,4 +251,18 @@ function generateTemporaryPassword() {
 function formatDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date);
+}
+
+function approvalStatus(user: ManagedUser) {
+  return user.approval_status || 'APPROVED';
+}
+
+function provider(user: ManagedUser) {
+  return user.provider === 'GOOGLE' ? 'GOOGLE' : 'PASSWORD';
+}
+
+function passwordLoginEnabled(user: ManagedUser) {
+  if (typeof user.password_login_enabled === 'boolean') return user.password_login_enabled;
+  if (typeof user.password_login_enabled === 'number') return user.password_login_enabled === 1;
+  return provider(user) === 'PASSWORD';
 }
