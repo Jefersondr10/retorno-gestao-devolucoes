@@ -2,18 +2,29 @@ import { env } from 'cloudflare:workers';
 
 import { getBlockingReasons, type ReturnDetail } from '@/lib/returns';
 
+export const LEGACY_ORGANIZATION_ID = 'org_nucleo_legacy';
+
 const statements = [
   `CREATE TABLE IF NOT EXISTS return_sequences (id INTEGER PRIMARY KEY AUTOINCREMENT)`,
-  `CREATE TABLE IF NOT EXISTS status_definitions (
-    code TEXT PRIMARY KEY,
+  `CREATE TABLE IF NOT EXISTS organizations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS tenant_status_definitions (
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,
     label TEXT NOT NULL,
     color TEXT NOT NULL DEFAULT 'slate',
     is_system INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL DEFAULT 100,
-    active INTEGER NOT NULL DEFAULT 1
+    active INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (organization_id, code)
   )`,
-  `CREATE TABLE IF NOT EXISTS config_options (
-    code TEXT PRIMARY KEY,
+  `CREATE TABLE IF NOT EXISTS tenant_config_options (
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,
     type TEXT NOT NULL,
     label TEXT NOT NULL,
     color TEXT NOT NULL DEFAULT '#64748b',
@@ -22,17 +33,21 @@ const statements = [
     active INTEGER NOT NULL DEFAULT 1,
     requires_invoice INTEGER NOT NULL DEFAULT 1,
     requires_notes INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (organization_id, code)
   )`,
-  `CREATE TABLE IF NOT EXISTS system_settings (
-    key TEXT PRIMARY KEY,
+  `CREATE TABLE IF NOT EXISTS tenant_system_settings (
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
     value TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (organization_id, key)
   )`,
   `CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
+    email TEXT,
     google_sub TEXT,
     google_email TEXT,
     password_hash TEXT NOT NULL,
@@ -50,23 +65,34 @@ const statements = [
     updated_at TEXT NOT NULL,
     CHECK (role IN ('ADMIN', 'OPERATOR'))
   )`,
-  `CREATE TRIGGER IF NOT EXISTS users_keep_one_admin_on_update
-    BEFORE UPDATE OF role, active ON users
-    WHEN OLD.role = 'ADMIN' AND OLD.active = 1
-      AND NOT (NEW.role = 'ADMIN' AND NEW.active = 1)
+  `CREATE TABLE IF NOT EXISTS organization_memberships (
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'OPERATOR',
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (organization_id, user_id),
+    CHECK (role IN ('ADMIN', 'OPERATOR')),
+    CHECK (status IN ('ACTIVE', 'PENDING', 'REJECTED', 'SUSPENDED'))
+  )`,
+  `CREATE TRIGGER IF NOT EXISTS memberships_keep_one_admin_on_update
+    BEFORE UPDATE OF role, status, organization_id ON organization_memberships
+    WHEN OLD.role = 'ADMIN' AND OLD.status = 'ACTIVE'
+      AND NOT (NEW.role = 'ADMIN' AND NEW.status = 'ACTIVE' AND NEW.organization_id = OLD.organization_id)
       AND NOT EXISTS (
-        SELECT 1 FROM users
-        WHERE id <> OLD.id AND role = 'ADMIN' AND active = 1
+        SELECT 1 FROM organization_memberships
+        WHERE user_id <> OLD.user_id AND organization_id = OLD.organization_id AND role = 'ADMIN' AND status = 'ACTIVE'
       )
     BEGIN
       SELECT RAISE(ABORT, 'LAST_ACTIVE_ADMIN');
     END`,
-  `CREATE TRIGGER IF NOT EXISTS users_keep_one_admin_on_delete
-    BEFORE DELETE ON users
-    WHEN OLD.role = 'ADMIN' AND OLD.active = 1
+  `CREATE TRIGGER IF NOT EXISTS memberships_keep_one_admin_on_delete
+    BEFORE DELETE ON organization_memberships
+    WHEN OLD.role = 'ADMIN' AND OLD.status = 'ACTIVE'
       AND NOT EXISTS (
-        SELECT 1 FROM users
-        WHERE id <> OLD.id AND role = 'ADMIN' AND active = 1
+        SELECT 1 FROM organization_memberships
+        WHERE user_id <> OLD.user_id AND organization_id = OLD.organization_id AND role = 'ADMIN' AND status = 'ACTIVE'
       )
     BEGIN
       SELECT RAISE(ABORT, 'LAST_ACTIVE_ADMIN');
@@ -74,6 +100,7 @@ const statements = [
   `CREATE TABLE IF NOT EXISTS auth_sessions (
     token_hash TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
     csrf_hash TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -91,6 +118,14 @@ const statements = [
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS auth_google_onboarding (
+    token_hash TEXT PRIMARY KEY,
+    google_sub TEXT NOT NULL,
+    email TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS auth_bootstrap (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     completed_at TEXT NOT NULL,
@@ -98,6 +133,7 @@ const statements = [
   )`,
   `CREATE TABLE IF NOT EXISTS returns (
     id TEXT PRIMARY KEY,
+    organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
     protocol TEXT NOT NULL UNIQUE,
     store TEXT,
     received_location TEXT NOT NULL,
@@ -151,6 +187,7 @@ const statements = [
   )`,
   `CREATE TABLE IF NOT EXISTS audit_events (
     id TEXT PRIMARY KEY,
+    organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
     return_id TEXT REFERENCES returns(id) ON DELETE CASCADE,
     actor TEXT NOT NULL,
     action TEXT NOT NULL,
@@ -158,27 +195,57 @@ const statements = [
     created_at TEXT NOT NULL
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_returns_protocol ON returns(protocol)`,
-  `CREATE INDEX IF NOT EXISTS idx_returns_status_received ON returns(status, received_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_returns_status_finalized ON returns(status, finalized_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_returns_tracking ON returns(tracking_code)`,
-  `CREATE INDEX IF NOT EXISTS idx_returns_order ON returns(order_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_returns_org_status_received ON returns(organization_id, status, received_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_returns_org_status_finalized ON returns(organization_id, status, finalized_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_returns_org_tracking ON returns(organization_id, tracking_code)`,
+  `CREATE INDEX IF NOT EXISTS idx_returns_org_order ON returns(organization_id, order_id)`,
   `CREATE INDEX IF NOT EXISTS idx_return_items_return_id ON return_items(return_id)`,
   `CREATE INDEX IF NOT EXISTS idx_return_photos_return_id ON return_photos(return_id)`,
   `CREATE INDEX IF NOT EXISTS idx_return_videos_return_id ON return_videos(return_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_return_videos_object_key ON return_videos(object_key)`,
+  `CREATE INDEX IF NOT EXISTS idx_audit_events_org_created ON audit_events(organization_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_audit_events_return_id_created ON audit_events(return_id, created_at)`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_config_options_type_label ON config_options(type, label)`,
-  `CREATE INDEX IF NOT EXISTS idx_config_options_type_active ON config_options(type, active, sort_order)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_status_org_code ON tenant_status_definitions(organization_id, code)`,
+  `CREATE INDEX IF NOT EXISTS idx_tenant_status_org_active ON tenant_status_definitions(organization_id, active, sort_order)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_config_org_code ON tenant_config_options(organization_id, code)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_config_org_type_label ON tenant_config_options(organization_id, type, label)`,
+  `CREATE INDEX IF NOT EXISTS idx_tenant_config_org_type_active ON tenant_config_options(organization_id, type, active, sort_order)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_settings_org_key ON tenant_system_settings(organization_id, key)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nocase ON users(email COLLATE NOCASE) WHERE email IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_memberships_org_user ON organization_memberships(organization_id, user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_memberships_user_status ON organization_memberships(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS idx_memberships_org_status_role ON organization_memberships(organization_id, status, role)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_memberships_one_active_org ON organization_memberships(user_id) WHERE status = 'ACTIVE'`,
   `CREATE INDEX IF NOT EXISTS idx_users_google_email ON users(google_email)`,
   `CREATE INDEX IF NOT EXISTS idx_users_approval_status ON users(approval_status, active)`,
   `CREATE INDEX IF NOT EXISTS idx_users_active_role ON users(active, role)`,
   `CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_auth_sessions_organization ON auth_sessions(organization_id)`,
   `CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_google_onboarding_sub ON auth_google_onboarding(google_sub)`,
+  `CREATE TRIGGER IF NOT EXISTS auth_sessions_require_organization_insert
+    BEFORE INSERT ON auth_sessions WHEN NEW.organization_id IS NULL
+    BEGIN SELECT RAISE(ABORT, 'ORGANIZATION_REQUIRED'); END`,
+  `CREATE TRIGGER IF NOT EXISTS auth_sessions_require_organization_update
+    BEFORE UPDATE OF organization_id ON auth_sessions WHEN NEW.organization_id IS NULL
+    BEGIN SELECT RAISE(ABORT, 'ORGANIZATION_REQUIRED'); END`,
+  `CREATE TRIGGER IF NOT EXISTS returns_require_organization_insert
+    BEFORE INSERT ON returns WHEN NEW.organization_id IS NULL
+    BEGIN SELECT RAISE(ABORT, 'ORGANIZATION_REQUIRED'); END`,
+  `CREATE TRIGGER IF NOT EXISTS returns_require_organization_update
+    BEFORE UPDATE OF organization_id ON returns WHEN NEW.organization_id IS NULL
+    BEGIN SELECT RAISE(ABORT, 'ORGANIZATION_REQUIRED'); END`,
+  `CREATE TRIGGER IF NOT EXISTS audit_events_require_organization_insert
+    BEFORE INSERT ON audit_events WHEN NEW.organization_id IS NULL
+    BEGIN SELECT RAISE(ABORT, 'ORGANIZATION_REQUIRED'); END`,
+  `CREATE TRIGGER IF NOT EXISTS audit_events_require_organization_update
+    BEFORE UPDATE OF organization_id ON audit_events WHEN NEW.organization_id IS NULL
+    BEGIN SELECT RAISE(ABORT, 'ORGANIZATION_REQUIRED'); END`,
 ];
 
-const defaultStatuses = [
+export const defaultStatuses = [
   ['PENDING_INFO', 'Dados pendentes', 'amber', 10],
   ['IN_TRIAGE', 'Em triagem', 'blue', 20],
   ['WAITING_TEST', 'Aguardando teste', 'sky', 30],
@@ -188,7 +255,7 @@ const defaultStatuses = [
   ['FINALIZED', 'Finalizada', 'slate', 999],
 ] as const;
 
-const defaultConfigOptions = [
+export const defaultConfigOptions = [
   ['LOCATION_SAO_PAULO', 'LOCATION', 'Escritório de São Paulo', '#0f766e', 1, 10, 1, 0],
   ['NEW', 'CONDITION', 'Novo', '#16a34a', 1, 10, 1, 0],
   ['SEMI_NEW', 'CONDITION', 'Seminovo', '#0891b2', 1, 20, 1, 0],
@@ -198,7 +265,7 @@ const defaultConfigOptions = [
   ['OTHER', 'CONDITION', 'Outro', '#64748b', 1, 60, 1, 1],
 ] as const;
 
-const defaultSystemSettings = [
+export const defaultSystemSettings = [
   ['automatic_cleanup_enabled', '0'],
   ['photo_retention_days', '90'],
   ['return_retention_days', '365'],
@@ -216,40 +283,52 @@ export function getBindings() {
   return { db: env.DB, files: env.FILES };
 }
 
+export function organizationSeedOperations(db: D1Database, organizationId: string, now = new Date().toISOString()) {
+  return [
+    ...defaultStatuses.map(([code, label, color, order]) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO tenant_status_definitions
+           (organization_id, code, label, color, is_system, sort_order, active)
+           VALUES (?, ?, ?, ?, 1, ?, 1)`,
+        )
+        .bind(organizationId, code, label, color, order),
+    ),
+    ...defaultConfigOptions.map(([code, type, label, color, isSystem, order, requiresInvoice, requiresNotes]) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO tenant_config_options
+           (organization_id, code, type, label, color, is_system, sort_order, active, requires_invoice, requires_notes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+        )
+        .bind(organizationId, code, type, label, color, isSystem, order, requiresInvoice, requiresNotes, now),
+    ),
+    ...defaultSystemSettings.map(([key, value]) =>
+      db
+        .prepare('INSERT OR IGNORE INTO tenant_system_settings (organization_id, key, value, updated_at) VALUES (?, ?, ?, ?)')
+        .bind(organizationId, key, value, now),
+    ),
+  ];
+}
+
+export async function ensureOrganizationDefaults(organizationId: string) {
+  await ensureSchema();
+  const { db } = getBindings();
+  await db.batch(organizationSeedOperations(db, organizationId));
+}
+
 export async function ensureSchema() {
   if (!schemaPromise) {
     schemaPromise = (async () => {
       const { db } = getBindings();
       await db.batch(statements.map((statement) => db.prepare(statement)));
-      await db.batch(
-        defaultStatuses.map(([code, label, color, order]) =>
-          db
-            .prepare(
-              `INSERT OR IGNORE INTO status_definitions
-               (code, label, color, is_system, sort_order, active)
-               VALUES (?, ?, ?, 1, ?, 1)`,
-            )
-            .bind(code, label, color, order),
-        ),
-      );
-      await db.batch(
-        defaultConfigOptions.map(([code, type, label, color, isSystem, order, requiresInvoice, requiresNotes]) =>
-          db
-            .prepare(
-              `INSERT OR IGNORE INTO config_options
-               (code, type, label, color, is_system, sort_order, active, requires_invoice, requires_notes, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
-            )
-            .bind(code, type, label, color, isSystem, order, requiresInvoice, requiresNotes, new Date().toISOString()),
-        ),
-      );
-      await db.batch(
-        defaultSystemSettings.map(([key, value]) =>
-          db
-            .prepare('INSERT OR IGNORE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)')
-            .bind(key, value, new Date().toISOString()),
-        ),
-      );
+      const now = new Date().toISOString();
+      await db.batch([
+        db
+          .prepare('INSERT OR IGNORE INTO organizations (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
+          .bind(LEGACY_ORGANIZATION_ID, 'Núcleo de Operação', now, now),
+        ...organizationSeedOperations(db, LEGACY_ORGANIZATION_ID, now),
+      ]);
       await db.prepare('PRAGMA optimize').run();
     })().catch((error) => {
       schemaPromise = null;
@@ -259,7 +338,7 @@ export async function ensureSchema() {
   await schemaPromise;
 }
 
-export async function getReturnDetail(id: string): Promise<ReturnDetail | null> {
+export async function getReturnDetail(id: string, organizationId: string): Promise<ReturnDetail | null> {
   await ensureSchema();
   const { db } = getBindings();
   const record = await db
@@ -271,11 +350,11 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
         (SELECT COUNT(*) FROM return_videos v WHERE v.return_id = r.id) AS video_count,
         (SELECT p.id FROM return_photos p WHERE p.return_id = r.id ORDER BY p.created_at LIMIT 1) AS first_photo_id
        FROM returns r
-       LEFT JOIN status_definitions s ON s.code = r.status
-       LEFT JOIN config_options store_option ON store_option.type = 'STORE' AND store_option.label = r.store
-       WHERE r.id = ?`,
+       LEFT JOIN tenant_status_definitions s ON s.organization_id = r.organization_id AND s.code = r.status
+       LEFT JOIN tenant_config_options store_option ON store_option.organization_id = r.organization_id AND store_option.type = 'STORE' AND store_option.label = r.store
+       WHERE r.id = ? AND r.organization_id = ?`,
     )
-    .bind(id)
+    .bind(id, organizationId)
     .first<Record<string, unknown>>();
 
   if (!record) return null;
@@ -291,11 +370,12 @@ export async function getReturnDetail(id: string): Promise<ReturnDetail | null> 
       .bind(id)
       .all(),
     db
-      .prepare('SELECT id, actor, action, details, created_at FROM audit_events WHERE return_id = ? ORDER BY created_at DESC LIMIT 100')
-      .bind(id)
+      .prepare('SELECT id, actor, action, details, created_at FROM audit_events WHERE return_id = ? AND organization_id = ? ORDER BY created_at DESC LIMIT 100')
+      .bind(id, organizationId)
       .all(),
     db
-      .prepare("SELECT code, requires_invoice, requires_notes FROM config_options WHERE type = 'CONDITION'")
+      .prepare("SELECT code, requires_invoice, requires_notes FROM tenant_config_options WHERE organization_id = ? AND type = 'CONDITION'")
+      .bind(organizationId)
       .all<{ code: string; requires_invoice: number; requires_notes: number }>(),
   ]);
 

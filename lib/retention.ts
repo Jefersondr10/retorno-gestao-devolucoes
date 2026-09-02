@@ -10,6 +10,7 @@ type PendingStorageDeletionAction = 'VIDEOS_DELETION_PENDING' | 'STORAGE_DELETIO
 
 export type PendingStorageDeletion = {
   id: string;
+  organizationId: string;
   action: PendingStorageDeletionAction;
   objectKeys: string[];
 };
@@ -69,6 +70,7 @@ function deleteInBatches(db: D1Database, sqlPrefix: string, ids: string[]) {
 export function prepareStorageDeletionOutbox(
   db: D1Database,
   input: {
+    organizationId: string;
     objectKeys: string[];
     actor: string;
     now: string;
@@ -82,12 +84,13 @@ export function prepareStorageDeletionOutbox(
 
   objectKeyChunks.forEach((objectKeys, index) => {
     const id = crypto.randomUUID();
-    events.push({ id, action: 'STORAGE_DELETION_PENDING', objectKeys });
+    events.push({ id, organizationId: input.organizationId, action: 'STORAGE_DELETION_PENDING', objectKeys });
     operations.push(
       db
-        .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'STORAGE_DELETION_PENDING', ?, ?)")
+        .prepare("INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at) VALUES (?, ?, NULL, ?, 'STORAGE_DELETION_PENDING', ?, ?)")
         .bind(
           id,
+          input.organizationId,
           input.actor,
           JSON.stringify({
             ...input.details,
@@ -140,29 +143,30 @@ export async function completeStorageDeletionEvents(events: PendingStorageDeleti
   }
 }
 
-async function flushPendingStorageDeletions() {
+async function flushPendingStorageDeletions(organizationId: string) {
   const { db } = getBindings();
   const pending = await db
     .prepare(
       `SELECT id, action, details
        FROM audit_events
-       WHERE action IN ('VIDEOS_DELETION_PENDING', 'STORAGE_DELETION_PENDING')
+       WHERE organization_id = ?
+         AND action IN ('VIDEOS_DELETION_PENDING', 'STORAGE_DELETION_PENDING')
          AND json_valid(details)
          AND json_type(details, '$.objectKeys') = 'array'
          AND json_array_length(details, '$.objectKeys') > 0
        ORDER BY created_at
        LIMIT ?`,
     )
-    .bind(PENDING_DELETION_EVENT_LIMIT)
+    .bind(organizationId, PENDING_DELETION_EVENT_LIMIT)
     .all<{ id: string; action: PendingStorageDeletionAction; details: string | null }>();
   return completeStorageDeletionEvents(
-    pending.results.map((event) => ({ id: event.id, action: event.action, objectKeys: queuedObjectKeys(event.details) })),
+    pending.results.map((event) => ({ id: event.id, organizationId, action: event.action, objectKeys: queuedObjectKeys(event.details) })),
   );
 }
 
-async function readPolicy(): Promise<RetentionPolicy> {
+async function readPolicy(organizationId: string): Promise<RetentionPolicy> {
   const { db } = getBindings();
-  const result = await db.prepare('SELECT key, value FROM system_settings').all<{ key: string; value: string }>();
+  const result = await db.prepare('SELECT key, value FROM tenant_system_settings WHERE organization_id = ?').bind(organizationId).all<{ key: string; value: string }>();
   const settings = new Map(result.results.map((row) => [row.key, row.value]));
   return {
     automaticEnabled: settings.get('automatic_cleanup_enabled') === '1',
@@ -175,7 +179,7 @@ async function readPolicy(): Promise<RetentionPolicy> {
   };
 }
 
-async function previewFor(policy: RetentionPolicy) {
+async function previewFor(policy: RetentionPolicy, organizationId: string) {
   const { db } = getBindings();
   const photoCutoff = cutoffIso(policy.photoRetentionDays);
   const returnCutoff = cutoffIso(policy.returnRetentionDays);
@@ -185,26 +189,26 @@ async function previewFor(policy: RetentionPolicy) {
         `SELECT COUNT(*) AS count, COALESCE(SUM(p.size), 0) AS bytes
          FROM return_photos p
          INNER JOIN returns r ON r.id = p.return_id
-         WHERE r.status = 'FINALIZED' AND r.finalized_at IS NOT NULL AND r.finalized_at < ?`,
+         WHERE r.organization_id = ? AND r.status = 'FINALIZED' AND r.finalized_at IS NOT NULL AND r.finalized_at < ?`,
       )
-      .bind(photoCutoff)
+      .bind(organizationId, photoCutoff)
       .first<{ count: number; bytes: number }>(),
     db
       .prepare(
         `SELECT COUNT(*) AS count, COALESCE(SUM(v.size), 0) AS bytes
          FROM return_videos v
          INNER JOIN returns r ON r.id = v.return_id
-         WHERE r.status = 'FINALIZED' AND r.finalized_at IS NOT NULL AND r.finalized_at < ?`,
+         WHERE r.organization_id = ? AND r.status = 'FINALIZED' AND r.finalized_at IS NOT NULL AND r.finalized_at < ?`,
       )
-      .bind(photoCutoff)
+      .bind(organizationId, photoCutoff)
       .first<{ count: number; bytes: number }>(),
     db
       .prepare(
         `SELECT COUNT(*) AS count
          FROM returns
-         WHERE status = 'FINALIZED' AND finalized_at IS NOT NULL AND finalized_at < ?`,
+         WHERE organization_id = ? AND status = 'FINALIZED' AND finalized_at IS NOT NULL AND finalized_at < ?`,
       )
-      .bind(returnCutoff)
+      .bind(organizationId, returnCutoff)
       .first<{ count: number }>(),
   ]);
   return {
@@ -216,12 +220,12 @@ async function previewFor(policy: RetentionPolicy) {
   };
 }
 
-export async function getRetentionOverview(): Promise<RetentionOverview> {
-  const policy = await readPolicy();
-  return { ...policy, ...(await previewFor(policy)) };
+export async function getRetentionOverview(organizationId: string): Promise<RetentionOverview> {
+  const policy = await readPolicy(organizationId);
+  return { ...policy, ...(await previewFor(policy, organizationId)) };
 }
 
-export async function saveRetentionPolicy(input: {
+export async function saveRetentionPolicy(organizationId: string, input: {
   automaticEnabled: boolean;
   photoRetentionDays: number;
   returnRetentionDays: number;
@@ -229,21 +233,21 @@ export async function saveRetentionPolicy(input: {
   const { db } = getBindings();
   const now = new Date().toISOString();
   await db.batch([
-    db.prepare("UPDATE system_settings SET value = ?, updated_at = ? WHERE key = 'automatic_cleanup_enabled'").bind(input.automaticEnabled ? '1' : '0', now),
-    db.prepare("UPDATE system_settings SET value = ?, updated_at = ? WHERE key = 'photo_retention_days'").bind(String(input.photoRetentionDays), now),
-    db.prepare("UPDATE system_settings SET value = ?, updated_at = ? WHERE key = 'return_retention_days'").bind(String(input.returnRetentionDays), now),
+    db.prepare("UPDATE tenant_system_settings SET value = ?, updated_at = ? WHERE organization_id = ? AND key = 'automatic_cleanup_enabled'").bind(input.automaticEnabled ? '1' : '0', now, organizationId),
+    db.prepare("UPDATE tenant_system_settings SET value = ?, updated_at = ? WHERE organization_id = ? AND key = 'photo_retention_days'").bind(String(input.photoRetentionDays), now, organizationId),
+    db.prepare("UPDATE tenant_system_settings SET value = ?, updated_at = ? WHERE organization_id = ? AND key = 'return_retention_days'").bind(String(input.returnRetentionDays), now, organizationId),
   ]);
-  return getRetentionOverview();
+  return getRetentionOverview(organizationId);
 }
 
-export async function runRetentionCleanup({ force = false, actor = 'Limpeza automática' }: { force?: boolean; actor?: string } = {}) {
-  const completedPendingStorageDeletions = await flushPendingStorageDeletions();
-  const policy = await readPolicy();
-  if (!force && !policy.automaticEnabled) return { executed: false, overview: { ...policy, ...(await previewFor(policy)) } };
+export async function runRetentionCleanup({ organizationId, force = false, actor = 'Limpeza automática' }: { organizationId: string; force?: boolean; actor?: string }) {
+  const completedPendingStorageDeletions = await flushPendingStorageDeletions(organizationId);
+  const policy = await readPolicy(organizationId);
+  if (!force && !policy.automaticEnabled) return { executed: false, overview: { ...policy, ...(await previewFor(policy, organizationId)) } };
 
   const lastRun = policy.lastCleanupAt ? new Date(policy.lastCleanupAt).getTime() : 0;
   if (!force && Number.isFinite(lastRun) && Date.now() - lastRun < AUTO_CLEANUP_INTERVAL_MS) {
-    const currentPreview = await previewFor(policy);
+    const currentPreview = await previewFor(policy, organizationId);
     const hasBacklog = currentPreview.eligiblePhotos > 0 || currentPreview.eligibleVideos > 0 || currentPreview.eligibleReturns > 0;
     if (!hasBacklog) return { executed: false, overview: { ...policy, ...currentPreview } };
   }
@@ -255,10 +259,10 @@ export async function runRetentionCleanup({ force = false, actor = 'Limpeza auto
   const expiredReturns = await db
     .prepare(
       `SELECT id, protocol FROM returns
-       WHERE status = 'FINALIZED' AND finalized_at IS NOT NULL AND finalized_at < ?
+       WHERE organization_id = ? AND status = 'FINALIZED' AND finalized_at IS NOT NULL AND finalized_at < ?
        ORDER BY finalized_at ASC LIMIT 100`,
     )
-    .bind(returnCutoff)
+    .bind(organizationId, returnCutoff)
     .all<{ id: string; protocol: string }>();
 
   let deletedPhotos = 0;
@@ -281,6 +285,7 @@ export async function runRetentionCleanup({ force = false, actor = 'Limpeza auto
     ])];
     const queuedAt = new Date().toISOString();
     const outbox = prepareStorageDeletionOutbox(db, {
+      organizationId,
       objectKeys,
       actor,
       now: queuedAt,
@@ -314,26 +319,27 @@ export async function runRetentionCleanup({ force = false, actor = 'Limpeza auto
         `SELECT p.id, p.object_key, p.size
          FROM return_photos p
          INNER JOIN returns r ON r.id = p.return_id
-         WHERE r.status = 'FINALIZED' AND r.finalized_at IS NOT NULL AND r.finalized_at < ?
+         WHERE r.organization_id = ? AND r.status = 'FINALIZED' AND r.finalized_at IS NOT NULL AND r.finalized_at < ?
          ORDER BY r.finalized_at ASC, p.created_at ASC LIMIT 500`,
       )
-      .bind(photoCutoff)
+      .bind(organizationId, photoCutoff)
       .all<{ id: string; object_key: string; size: number }>(),
     db
       .prepare(
         `SELECT v.id, v.object_key, v.size
          FROM return_videos v
          INNER JOIN returns r ON r.id = v.return_id
-         WHERE r.status = 'FINALIZED' AND r.finalized_at IS NOT NULL AND r.finalized_at < ?
+         WHERE r.organization_id = ? AND r.status = 'FINALIZED' AND r.finalized_at IS NOT NULL AND r.finalized_at < ?
          ORDER BY r.finalized_at ASC, v.created_at ASC LIMIT 200`,
       )
-      .bind(photoCutoff)
+      .bind(organizationId, photoCutoff)
       .all<{ id: string; object_key: string; size: number }>(),
   ]);
   const expiredMediaKeys = [...expiredPhotos.results, ...expiredVideos.results].map((media) => media.object_key);
   if (expiredMediaKeys.length) {
     const queuedAt = new Date().toISOString();
     const outbox = prepareStorageDeletionOutbox(db, {
+      organizationId,
       objectKeys: expiredMediaKeys,
       actor,
       now: queuedAt,
@@ -357,14 +363,14 @@ export async function runRetentionCleanup({ force = false, actor = 'Limpeza auto
 
   const now = new Date().toISOString();
   await db.batch([
-    db.prepare("UPDATE system_settings SET value = ?, updated_at = ? WHERE key = 'last_cleanup_at'").bind(now, now),
-    db.prepare("UPDATE system_settings SET value = ?, updated_at = ? WHERE key = 'last_cleanup_photos'").bind(String(deletedPhotos), now),
-    db.prepare("UPDATE system_settings SET value = ?, updated_at = ? WHERE key = 'last_cleanup_videos'").bind(String(deletedVideos), now),
-    db.prepare("UPDATE system_settings SET value = ?, updated_at = ? WHERE key = 'last_cleanup_returns'").bind(String(deletedReturns), now),
+    db.prepare("UPDATE tenant_system_settings SET value = ?, updated_at = ? WHERE organization_id = ? AND key = 'last_cleanup_at'").bind(now, now, organizationId),
+    db.prepare("UPDATE tenant_system_settings SET value = ?, updated_at = ? WHERE organization_id = ? AND key = 'last_cleanup_photos'").bind(String(deletedPhotos), now, organizationId),
+    db.prepare("UPDATE tenant_system_settings SET value = ?, updated_at = ? WHERE organization_id = ? AND key = 'last_cleanup_videos'").bind(String(deletedVideos), now, organizationId),
+    db.prepare("UPDATE tenant_system_settings SET value = ?, updated_at = ? WHERE organization_id = ? AND key = 'last_cleanup_returns'").bind(String(deletedReturns), now, organizationId),
     db
-      .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'RETENTION_CLEANUP', ?, ?)")
-      .bind(crypto.randomUUID(), actor, JSON.stringify({ deletedPhotos, deletedPhotoBytes, deletedVideos, deletedVideoBytes, deletedReturns, completedPendingStorageDeletions, force }), now),
+      .prepare("INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at) VALUES (?, ?, NULL, ?, 'RETENTION_CLEANUP', ?, ?)")
+      .bind(crypto.randomUUID(), organizationId, actor, JSON.stringify({ deletedPhotos, deletedPhotoBytes, deletedVideos, deletedVideoBytes, deletedReturns, completedPendingStorageDeletions, force }), now),
   ]);
 
-  return { executed: true, overview: await getRetentionOverview() };
+  return { executed: true, overview: await getRetentionOverview(organizationId) };
 }

@@ -7,9 +7,11 @@ import {
 } from '@/lib/auth';
 import {
   appendClearedGoogleNonceCookies,
+  appendGoogleOnboardingCookie,
   authenticateWithGoogle,
   consumeGoogleNonceFromRequest,
 } from '@/lib/google-auth';
+import { readBoundedJsonObject } from '@/lib/request-body';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,24 +33,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const contentLength = Number(request.headers.get('content-length') || 0);
-  if (Number.isFinite(contentLength) && contentLength > 32_768) {
-    return jsonResponse({ error: 'A solicitação ficou grande demais.', code: 'PAYLOAD_TOO_LARGE' }, 413);
-  }
-  const rawBody = await request.text();
-  if (new TextEncoder().encode(rawBody).byteLength > 32_768) {
-    return jsonResponse({ error: 'A solicitação ficou grande demais.', code: 'PAYLOAD_TOO_LARGE' }, 413);
-  }
-  const body = (() => {
-    try {
-      const parsed = JSON.parse(rawBody) as unknown;
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as { credential?: unknown; returnTo?: unknown }
-        : {};
-    } catch {
-      return {};
-    }
-  })();
+  const parsedBody = await readBoundedJsonObject(request, 32_768);
+  if (!parsedBody.ok) return jsonResponse({ error: parsedBody.error, code: parsedBody.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_JSON' }, parsedBody.status);
+  const body = parsedBody.value;
   if (
     typeof body.credential !== 'string'
     || body.credential.length < 100
@@ -68,24 +55,23 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await authenticateWithGoogle(body.credential, expectedNonce);
+  const result = await authenticateWithGoogle(body.credential, expectedNonce, request);
   if (result.kind === 'error') {
     return jsonResponse({ error: result.error, code: result.code }, result.status);
   }
-  await clearGoogleAuthRateLimit(rateLimit.subjectHash);
-  if (result.kind === 'pending') {
-    return jsonResponse(
-      {
-        pending: true,
-        created: result.created,
-        email: result.email,
-        message: result.created
-          ? 'Cadastro enviado. Um administrador precisa aprovar seu acesso.'
-          : 'Seu cadastro ainda aguarda aprovação de um administrador.',
-      },
-      202,
-    );
+  if (result.kind === 'onboarding') {
+    const headers = new Headers({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    appendClearedGoogleNonceCookies(headers);
+    appendGoogleOnboardingCookie(headers, request, result.onboardingToken);
+    return new Response(JSON.stringify({
+      onboarding: true,
+      destination: `/cadastro?google=1&returnTo=${encodeURIComponent(safeReturnPath(typeof body.returnTo === 'string' ? body.returnTo : undefined))}`,
+      email: result.email,
+      displayName: result.displayName,
+    }), { status: 202, headers });
   }
+
+  await clearGoogleAuthRateLimit(rateLimit.subjectHash);
 
   const headers = new Headers({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   appendClearedGoogleNonceCookies(headers);

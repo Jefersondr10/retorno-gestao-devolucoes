@@ -1,4 +1,5 @@
 import { appendSessionCookies, login, safeReturnPath, verifySameOriginRequest } from '@/lib/auth';
+import { readBoundedJsonObject } from '@/lib/request-body';
 
 export const dynamic = 'force-dynamic';
 
@@ -6,24 +7,9 @@ export async function POST(request: Request) {
   if (!verifySameOriginRequest(request)) {
     return Response.json({ error: 'A solicitação não pôde ser validada.' }, { status: 403, headers: { 'Cache-Control': 'no-store' } });
   }
-  const contentLength = Number(request.headers.get('content-length') || 0);
-  if (Number.isFinite(contentLength) && contentLength > 8_192) {
-    return Response.json({ error: 'A solicitação ficou grande demais.' }, { status: 413, headers: { 'Cache-Control': 'no-store' } });
-  }
-  const rawBody = await request.text();
-  if (new TextEncoder().encode(rawBody).byteLength > 8_192) {
-    return Response.json({ error: 'A solicitação ficou grande demais.' }, { status: 413, headers: { 'Cache-Control': 'no-store' } });
-  }
-  const body = (() => {
-    try {
-      const parsed = JSON.parse(rawBody) as unknown;
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as { username?: unknown; password?: unknown; returnTo?: unknown }
-        : {};
-    } catch {
-      return {};
-    }
-  })();
+  const parsedBody = await readBoundedJsonObject(request, 8_192);
+  if (!parsedBody.ok) return Response.json({ error: parsedBody.error }, { status: parsedBody.status, headers: { 'Cache-Control': 'no-store' } });
+  const body = parsedBody.value;
   if (typeof body.username !== 'string' || typeof body.password !== 'string') {
     return Response.json({ error: 'Informe o usuário e a senha.' }, { status: 422, headers: { 'Cache-Control': 'no-store' } });
   }

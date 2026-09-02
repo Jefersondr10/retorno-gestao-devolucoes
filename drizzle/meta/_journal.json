@@ -50,6 +50,13 @@
       "when": 1788236848369,
       "tag": "0006_brave_kitty_pryde",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1788239000000,
+      "tag": "0007_multi_tenant_self_signup",
+      "breakpoints": true
     }
   ]
 }

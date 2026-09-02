@@ -26,7 +26,7 @@ export async function GET(request: Request, context: RouteContext) {
     const auth = await authenticateApi(request, { csrf: false });
     if ('response' in auth) return auth.response;
     const { id } = await context.params;
-    const item = await getReturnDetail(id);
+    const item = await getReturnDetail(id, auth.user.organizationId);
     if (!item) return apiError('Devolução não encontrada.', 404);
     return Response.json({ item });
   } catch (error) {
@@ -41,7 +41,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;
-    const current = await getReturnDetail(id);
+    const current = await getReturnDetail(id, auth.user.organizationId);
     if (!current) return apiError('Devolução não encontrada.', 404);
     if (current.status === 'FINALIZED') {
       return apiError('Esta devolução já foi finalizada e está bloqueada para edição.', 409);
@@ -63,13 +63,14 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     const { db } = getBindings();
     const statusDefinition = await db
-      .prepare('SELECT code FROM status_definitions WHERE code = ? AND (active = 1 OR code = ?)')
-      .bind(data.status, current.status)
+      .prepare('SELECT code FROM tenant_status_definitions WHERE organization_id = ? AND code = ? AND (active = 1 OR code = ?)')
+      .bind(auth.user.organizationId, data.status, current.status)
       .first();
     if (!statusDefinition) return apiError('Selecione um status válido.', 422);
 
     const conditionPolicies = await db
-      .prepare("SELECT code, active, requires_invoice, requires_notes FROM config_options WHERE type = 'CONDITION'")
+      .prepare("SELECT code, active, requires_invoice, requires_notes FROM tenant_config_options WHERE organization_id = ? AND type = 'CONDITION'")
+      .bind(auth.user.organizationId)
       .all<{ code: string; active: number; requires_invoice: number; requires_notes: number }>();
     const conditionDefinitions = new Map(conditionPolicies.results.map((condition) => [condition.code, condition]));
     const currentConditionCodes = new Set(current.items.map((item) => item.condition).filter((code): code is string => Boolean(code)));
@@ -112,7 +113,7 @@ export async function PATCH(request: Request, context: RouteContext) {
             store = ?, received_location = ?, received_at = ?, order_id = ?,
             tracking_code = ?, status = ?, notes = ?, invoice_number = ?,
             invoice_date = ?, updated_by = ?, updated_at = ?
-           WHERE id = ? AND status <> 'FINALIZED' AND updated_at = ?`,
+           WHERE id = ? AND organization_id = ? AND status <> 'FINALIZED' AND updated_at = ?`,
         )
         .bind(
           data.store,
@@ -127,11 +128,12 @@ export async function PATCH(request: Request, context: RouteContext) {
           actor,
           now,
           id,
+          auth.user.organizationId,
           current.updated_at,
         ),
       db.prepare(`DELETE FROM return_items
-        WHERE return_id = ? AND EXISTS (SELECT 1 FROM returns WHERE id = ? AND updated_at = ?)`)
-        .bind(id, id, now),
+        WHERE return_id = ? AND EXISTS (SELECT 1 FROM returns WHERE id = ? AND organization_id = ? AND updated_at = ?)`)
+        .bind(id, id, auth.user.organizationId, now),
     ];
 
     for (const item of data.items) {
@@ -143,7 +145,7 @@ export async function PATCH(request: Request, context: RouteContext) {
               condition_notes, destination, test_result, notes
              )
              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-             WHERE EXISTS (SELECT 1 FROM returns WHERE id = ? AND updated_at = ?)`,
+             WHERE EXISTS (SELECT 1 FROM returns WHERE id = ? AND organization_id = ? AND updated_at = ?)`,
           )
           .bind(
             item.id || crypto.randomUUID(),
@@ -157,6 +159,7 @@ export async function PATCH(request: Request, context: RouteContext) {
             item.testResult || null,
             item.notes || null,
             id,
+            auth.user.organizationId,
             now,
           ),
       );
@@ -165,17 +168,19 @@ export async function PATCH(request: Request, context: RouteContext) {
     operations.push(
       db
         .prepare(
-          `INSERT INTO audit_events (id, return_id, actor, action, details, created_at)
-           SELECT ?, ?, ?, 'UPDATED', ?, ?
-           WHERE EXISTS (SELECT 1 FROM returns WHERE id = ? AND updated_at = ?)`,
+          `INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at)
+           SELECT ?, ?, ?, ?, 'UPDATED', ?, ?
+           WHERE EXISTS (SELECT 1 FROM returns WHERE id = ? AND organization_id = ? AND updated_at = ?)`,
         )
         .bind(
           crypto.randomUUID(),
+          auth.user.organizationId,
           id,
           actor,
           JSON.stringify({ previousStatus: current.status, status: nextStatus, itemCount: data.items.length, invoiceNumber: data.invoiceNumber || null }),
           now,
           id,
+          auth.user.organizationId,
           now,
         ),
     );
@@ -184,7 +189,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (!Number(updateResult.meta.changes || 0)) {
       return apiError('Esta devolução foi alterada por outra pessoa. Atualize a tela antes de salvar.', 409);
     }
-    return Response.json({ item: await getReturnDetail(id) });
+    return Response.json({ item: await getReturnDetail(id, auth.user.organizationId) });
   } catch (error) {
     console.error(error);
     return apiError('Não foi possível salvar as alterações.', 500);
@@ -197,7 +202,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;
-    const current = await getReturnDetail(id);
+    const current = await getReturnDetail(id, auth.user.organizationId);
     if (!current) return apiError('Devolução não encontrada.', 404);
     if (current.status !== 'FINALIZED') {
       return apiError('Somente devoluções finalizadas podem ser excluídas.', 409);
@@ -222,6 +227,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     const now = new Date().toISOString();
     const actor = actorLabel(auth.user);
     const outbox = prepareStorageDeletionOutbox(db, {
+      organizationId: auth.user.organizationId,
       objectKeys,
       actor,
       now,
@@ -235,14 +241,14 @@ export async function DELETE(request: Request, context: RouteContext) {
     });
     await db.batch([
       db
-        .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'RETURN_DELETED', ?, ?)")
-        .bind(crypto.randomUUID(), actor, JSON.stringify({ protocol: current.protocol, photoCount: photos.results.length, videoCount: videos.results.length }), now),
+        .prepare("INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at) VALUES (?, ?, NULL, ?, 'RETURN_DELETED', ?, ?)")
+        .bind(crypto.randomUUID(), auth.user.organizationId, actor, JSON.stringify({ protocol: current.protocol, photoCount: photos.results.length, videoCount: videos.results.length }), now),
       ...outbox.operations,
       db.prepare('DELETE FROM audit_events WHERE return_id = ?').bind(id),
       db.prepare('DELETE FROM return_items WHERE return_id = ?').bind(id),
       db.prepare('DELETE FROM return_photos WHERE return_id = ?').bind(id),
       db.prepare('DELETE FROM return_videos WHERE return_id = ?').bind(id),
-      db.prepare('DELETE FROM returns WHERE id = ?').bind(id),
+      db.prepare('DELETE FROM returns WHERE id = ? AND organization_id = ?').bind(id, auth.user.organizationId),
     ]);
     const completedStorageEvents = await completeStorageDeletionEvents(outbox.events);
     const storagePending = completedStorageEvents < outbox.events.length;

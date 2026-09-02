@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     const auth = await authenticateApi(request, { roles: ['ADMIN'], csrf: false });
     if ('response' in auth) return auth.response;
     await ensureSchema();
-    return Response.json({ item: await getRetentionOverview() });
+    return Response.json({ item: await getRetentionOverview(auth.user.organizationId) });
   } catch (error) {
     console.error(error);
     return apiError('Não foi possível carregar a política de retenção.', 500);
@@ -37,7 +37,7 @@ export async function PATCH(request: Request) {
     if (returnRetentionDays < photoRetentionDays) {
       return apiError('O registro completo não pode ser excluído antes das fotos e vídeos.', 422);
     }
-    const item = await saveRetentionPolicy({
+    const item = await saveRetentionPolicy(auth.user.organizationId, {
       automaticEnabled: body.automaticEnabled === true,
       photoRetentionDays,
       returnRetentionDays,
@@ -45,8 +45,8 @@ export async function PATCH(request: Request) {
     const { db } = getBindings();
     const now = new Date().toISOString();
     await db
-      .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, NULL, ?, 'RETENTION_UPDATED', ?, ?)")
-      .bind(crypto.randomUUID(), actorLabel(auth.user), JSON.stringify(item), now)
+      .prepare("INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at) VALUES (?, ?, NULL, ?, 'RETENTION_UPDATED', ?, ?)")
+      .bind(crypto.randomUUID(), auth.user.organizationId, actorLabel(auth.user), JSON.stringify(item), now)
       .run();
     return Response.json({ item });
   } catch (error) {
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     const auth = await authenticateApi(request, { roles: ['ADMIN'] });
     if ('response' in auth) return auth.response;
     await ensureSchema();
-    const result = await runRetentionCleanup({ force: true, actor: actorLabel(auth.user) });
+    const result = await runRetentionCleanup({ organizationId: auth.user.organizationId, force: true, actor: actorLabel(auth.user) });
     return Response.json(result);
   } catch (error) {
     console.error(error);

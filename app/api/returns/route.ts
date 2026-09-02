@@ -1,4 +1,4 @@
-import { actorLabel, authenticateApi } from '@/lib/auth';
+import { actorLabel, authenticateApi, consumeOrganizationActionRateLimit } from '@/lib/auth';
 import { apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
 import { createReturnSchema } from '@/lib/returns';
 import { runRetentionCleanup } from '@/lib/retention';
@@ -9,6 +9,9 @@ export const dynamic = 'force-dynamic';
 const MAX_VIDEO_BYTES = 40 * 1024 * 1024;
 const MAX_VIDEO_DURATION_MS = 20_000;
 const MAX_MULTIPART_BYTES = 64 * 1024 * 1024;
+const MAX_ORGANIZATION_STORAGE_BYTES = 1024 * 1024 * 1024;
+const MAX_ORGANIZATION_RETURNS = 25_000;
+const MAX_RETURN_CREATIONS_PER_WINDOW = 150;
 
 async function detectPhotoContentType(file: File) {
   const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
@@ -46,8 +49,8 @@ export async function GET(request: Request) {
     const status = url.searchParams.get('status')?.trim() || '';
     const includeFinalized = url.searchParams.get('includeFinalized') === 'true';
 
-    const conditions: string[] = [];
-    const values: unknown[] = [];
+    const conditions: string[] = ['r.organization_id = ?'];
+    const values: unknown[] = [auth.user.organizationId];
     if (status) {
       conditions.push('r.status = ?');
       values.push(status);
@@ -80,8 +83,8 @@ export async function GET(request: Request) {
         (SELECT COUNT(*) FROM return_videos v WHERE v.return_id = r.id) AS video_count,
         (SELECT p.id FROM return_photos p WHERE p.return_id = r.id ORDER BY p.created_at LIMIT 1) AS first_photo_id
        FROM returns r
-       LEFT JOIN status_definitions s ON s.code = r.status
-       LEFT JOIN config_options store_option ON store_option.type = 'STORE' AND store_option.label = r.store
+       LEFT JOIN tenant_status_definitions s ON s.organization_id = r.organization_id AND s.code = r.status
+       LEFT JOIN tenant_config_options store_option ON store_option.organization_id = r.organization_id AND store_option.type = 'STORE' AND store_option.label = r.store
        ${where}
        ORDER BY CASE r.status
           WHEN 'PENDING_INFO' THEN 1
@@ -109,6 +112,14 @@ export async function POST(request: Request) {
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { db, files } = getBindings();
+    const actionRateLimit = await consumeOrganizationActionRateLimit(
+      auth.user.organizationId,
+      'return-create',
+      MAX_RETURN_CREATIONS_PER_WINDOW,
+    );
+    if (!actionRateLimit.allowed) {
+      return apiError('Muitos cadastros foram enviados em pouco tempo. Aguarde alguns minutos e tente novamente.', 429);
+    }
     const actor = actorLabel(auth.user);
     const declaredBodyBytes = Number(request.headers.get('content-length'));
     if (Number.isFinite(declaredBodyBytes) && declaredBodyBytes > MAX_MULTIPART_BYTES) {
@@ -169,6 +180,20 @@ export async function POST(request: Request) {
       preparedVideos.push({ file: video, contentType, durationMs: measuredDurationMs });
     }
 
+    const usage = await db.prepare(`SELECT
+      (SELECT COUNT(*) FROM returns WHERE organization_id = ?) AS return_count,
+      (SELECT COALESCE(SUM(p.size), 0) FROM return_photos p INNER JOIN returns r ON r.id = p.return_id WHERE r.organization_id = ?)
+        + (SELECT COALESCE(SUM(v.size), 0) FROM return_videos v INNER JOIN returns r ON r.id = v.return_id WHERE r.organization_id = ?) AS storage_bytes`)
+      .bind(auth.user.organizationId, auth.user.organizationId, auth.user.organizationId)
+      .first<{ return_count: number; storage_bytes: number }>();
+    if (Number(usage?.return_count || 0) >= MAX_ORGANIZATION_RETURNS) {
+      return apiError('Esta empresa atingiu o limite de devoluções armazenadas. Exclua registros antigos antes de continuar.', 409);
+    }
+    const incomingBytes = [...preparedPhotos, ...preparedVideos].reduce((total, item) => total + item.file.size, 0);
+    if (Number(usage?.storage_bytes || 0) + incomingBytes > MAX_ORGANIZATION_STORAGE_BYTES) {
+      return apiError('Esta empresa atingiu o limite de armazenamento. Exclua fotos ou vídeos antigos antes de continuar.', 413);
+    }
+
     const duplicateParts: string[] = [];
     const duplicateValues: string[] = [];
     if (data.orderId) {
@@ -182,8 +207,8 @@ export async function POST(request: Request) {
     let duplicates: Array<{ id: string; protocol: string }> = [];
     if (duplicateParts.length) {
       const duplicateResult = await db
-        .prepare(`SELECT id, protocol FROM returns WHERE ${duplicateParts.join(' OR ')} LIMIT 5`)
-        .bind(...duplicateValues)
+        .prepare(`SELECT id, protocol FROM returns WHERE organization_id = ? AND (${duplicateParts.join(' OR ')}) LIMIT 5`)
+        .bind(auth.user.organizationId, ...duplicateValues)
         .all<{ id: string; protocol: string }>();
       duplicates = duplicateResult.results;
     }
@@ -215,7 +240,7 @@ export async function POST(request: Request) {
       const { file: photo, contentType } = preparedPhoto;
       const photoId = crypto.randomUUID();
       const safeName = photo.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120) || 'foto.jpg';
-      const key = `returns/${id}/photos/${photoId}-${safeName}`;
+      const key = `organizations/${auth.user.organizationId}/returns/${id}/photos/${photoId}-${safeName}`;
       await files.put(key, photo.stream(), { httpMetadata: { contentType } });
       uploadedKeys.push(key);
       photoRows.push({ id: photoId, key, fileName: photo.name, contentType, size: photo.size });
@@ -223,7 +248,7 @@ export async function POST(request: Request) {
     for (const video of preparedVideos) {
       const videoId = crypto.randomUUID();
       const safeName = video.file.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120) || (video.contentType === 'video/webm' ? 'video.webm' : video.contentType === 'video/quicktime' ? 'video.mov' : 'video.mp4');
-      const key = `returns/${id}/videos/${videoId}-${safeName}`;
+      const key = `organizations/${auth.user.organizationId}/returns/${id}/videos/${videoId}-${safeName}`;
       await files.put(key, video.file.stream(), { httpMetadata: { contentType: video.contentType } });
       uploadedKeys.push(key);
       videoRows.push({ id: videoId, key, fileName: video.file.name, contentType: video.contentType, size: video.file.size, durationMs: video.durationMs });
@@ -233,13 +258,14 @@ export async function POST(request: Request) {
       db
         .prepare(
           `INSERT INTO returns (
-            id, protocol, store, received_location, received_at, order_id,
+            id, organization_id, protocol, store, received_location, received_at, order_id,
             tracking_code, status, notes, source, created_by, created_at,
             updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           id,
+          auth.user.organizationId,
           protocol,
           data.store || null,
           data.receivedLocation,
@@ -256,11 +282,12 @@ export async function POST(request: Request) {
         ),
       db
         .prepare(
-          `INSERT INTO audit_events (id, return_id, actor, action, details, created_at)
-           VALUES (?, ?, ?, 'CREATED', ?, ?)`,
+          `INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at)
+           VALUES (?, ?, ?, ?, 'CREATED', ?, ?)`,
         )
         .bind(
           crypto.randomUUID(),
+          auth.user.organizationId,
           id,
           actor,
           JSON.stringify({ source: data.source, photos: photos.length, videos: videos.length, duplicateProtocols: duplicates.map((item) => item.protocol) }),
@@ -302,8 +329,8 @@ export async function POST(request: Request) {
     }
 
     await db.batch(operations);
-    const created = await getReturnDetail(id);
-    await runRetentionCleanup({ actor: 'Sistema · limpeza automática' }).catch((cleanupError) => console.error('Automatic retention cleanup failed', cleanupError));
+    const created = await getReturnDetail(id, auth.user.organizationId);
+    await runRetentionCleanup({ organizationId: auth.user.organizationId, actor: 'Sistema · limpeza automática' }).catch((cleanupError) => console.error('Automatic retention cleanup failed', cleanupError));
     return Response.json({ item: created, duplicates }, { status: 201 });
   } catch (error) {
     console.error(error);

@@ -73,8 +73,8 @@ export async function GET(request: Request, context: RouteContext) {
               AND (earlier.created_at < v.created_at OR (earlier.created_at = v.created_at AND earlier.id <= v.id))) AS video_number
         FROM return_videos v
         INNER JOIN returns r ON r.id = v.return_id
-        WHERE v.id = ?`)
-      .bind(id)
+        WHERE v.id = ? AND r.organization_id = ?`)
+      .bind(id, auth.user.organizationId)
       .first<VideoRecord>();
     if (!video) return apiError('Vídeo não encontrado.', 404);
 

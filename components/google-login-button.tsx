@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
+import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -48,7 +48,7 @@ type ChallengeResponse = {
 
 type LoginResponse = {
   destination?: string;
-  message?: string;
+  onboarding?: boolean;
   error?: string;
 };
 
@@ -57,7 +57,7 @@ let googleScriptPromise: Promise<void> | null = null;
 
 export function GoogleLoginButton({ returnTo }: { returnTo: string }) {
   const buttonContainer = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState<'loading' | 'ready' | 'submitting' | 'pending' | 'error'>('loading');
+  const [state, setState] = useState<'loading' | 'ready' | 'submitting' | 'error'>('loading');
   const [message, setMessage] = useState('');
 
   const completeGoogleLogin = useCallback(async (credential: string) => {
@@ -72,9 +72,8 @@ export function GoogleLoginButton({ returnTo }: { returnTo: string }) {
       });
       const result = (await response.json().catch(() => ({}))) as LoginResponse;
 
-      if (response.status === 202) {
-        setMessage(result.message || 'Seu acesso foi solicitado. Um administrador precisa aprová-lo antes do primeiro uso.');
-        setState('pending');
+      if (response.status === 202 && result.onboarding && result.destination) {
+        window.location.replace(result.destination);
         return;
       }
       if (!response.ok || !result.destination) throw new Error(result.error || 'Não foi possível entrar com o Google.');
@@ -147,8 +146,7 @@ export function GoogleLoginButton({ returnTo }: { returnTo: string }) {
 
   return (
     <div className="space-y-3">
-      {state !== 'pending' && (
-        <div className="relative grid min-h-11 place-items-center overflow-hidden rounded-xl">
+      <div className="relative grid min-h-11 place-items-center overflow-hidden rounded-xl">
           <div
             ref={buttonContainer}
             className={`flex min-h-11 w-full justify-center transition ${state === 'submitting' ? 'pointer-events-none opacity-45' : ''}`}
@@ -157,18 +155,7 @@ export function GoogleLoginButton({ returnTo }: { returnTo: string }) {
           {state === 'loading' && <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-xl border bg-background text-sm font-medium text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Preparando Google…</div>}
           {state === 'submitting' && <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-xl border bg-background/90 text-sm font-medium"><Loader2 className="size-4 animate-spin text-primary" /> Validando acesso…</div>}
           {state === 'error' && <Button type="button" variant="outline" className="absolute inset-0 h-full w-full rounded-xl" onClick={() => void prepareGoogleButton()}><RefreshCw /> Tentar Google novamente</Button>}
-        </div>
-      )}
-
-      {state === 'pending' && (
-        <output className="block">
-          <Alert className="border-amber-200 bg-amber-50 text-amber-950">
-            <CheckCircle2 />
-            <AlertTitle>Conta recebida para aprovação</AlertTitle>
-            <AlertDescription>{message}</AlertDescription>
-          </Alert>
-        </output>
-      )}
+      </div>
       {state === 'error' && message && (
         <Alert variant="destructive" role="alert">
           <AlertCircle />
@@ -176,7 +163,7 @@ export function GoogleLoginButton({ returnTo }: { returnTo: string }) {
           <AlertDescription>{message}</AlertDescription>
         </Alert>
       )}
-      <p className="text-center text-[11px] leading-5 text-muted-foreground">No primeiro acesso com Google, a conta fica aguardando aprovação de um administrador.</p>
+      <p className="text-center text-[11px] leading-5 text-muted-foreground">No primeiro acesso, você informa sua empresa e entra imediatamente.</p>
     </div>
   );
 }

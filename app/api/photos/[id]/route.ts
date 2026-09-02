@@ -63,8 +63,8 @@ export async function GET(request: Request, context: RouteContext) {
               AND (earlier.created_at < p.created_at OR (earlier.created_at = p.created_at AND earlier.id <= p.id))) AS photo_number
         FROM return_photos p
         INNER JOIN returns r ON r.id = p.return_id
-        WHERE p.id = ?`)
-      .bind(id)
+        WHERE p.id = ? AND r.organization_id = ?`)
+      .bind(id, auth.user.organizationId)
       .first<PhotoRecord>();
     if (!photo) return apiError('Foto não encontrada.', 404);
     const object = await files.get(photo.object_key);

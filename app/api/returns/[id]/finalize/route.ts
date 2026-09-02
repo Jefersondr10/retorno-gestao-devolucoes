@@ -16,7 +16,7 @@ export async function POST(request: Request, context: RouteContext) {
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;
-    const item = await getReturnDetail(id);
+    const item = await getReturnDetail(id, auth.user.organizationId);
     if (!item) return apiError('Devolução não encontrada.', 404);
     if (item.status === 'FINALIZED') return Response.json({ item });
 
@@ -41,21 +41,21 @@ export async function POST(request: Request, context: RouteContext) {
         .prepare(
           `UPDATE returns SET status = 'FINALIZED', finalized_by = ?, finalized_at = ?,
            updated_by = ?, updated_at = ?
-           WHERE id = ? AND status <> 'FINALIZED' AND updated_at = ?`,
+           WHERE id = ? AND organization_id = ? AND status <> 'FINALIZED' AND updated_at = ?`,
         )
-        .bind(actor, now, actor, now, id, item.updated_at),
+        .bind(actor, now, actor, now, id, auth.user.organizationId, item.updated_at),
       db
         .prepare(
-          `INSERT INTO audit_events (id, return_id, actor, action, details, created_at)
-           SELECT ?, ?, ?, 'FINALIZED', ?, ?
-           WHERE EXISTS (SELECT 1 FROM returns WHERE id = ? AND status = 'FINALIZED' AND updated_at = ?)`,
+          `INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at)
+           SELECT ?, ?, ?, ?, 'FINALIZED', ?, ?
+           WHERE EXISTS (SELECT 1 FROM returns WHERE id = ? AND organization_id = ? AND status = 'FINALIZED' AND updated_at = ?)`,
         )
-        .bind(crypto.randomUUID(), id, actor, JSON.stringify({ invoiceNumber: item.invoice_number }), now, id, now),
+        .bind(crypto.randomUUID(), auth.user.organizationId, id, actor, JSON.stringify({ invoiceNumber: item.invoice_number }), now, id, auth.user.organizationId, now),
     ]);
     if (!Number(updateResult.meta.changes || 0)) {
       return apiError('Esta devolução foi alterada por outra pessoa. Atualize a tela antes de finalizar.', 409);
     }
-    return Response.json({ item: await getReturnDetail(id) });
+    return Response.json({ item: await getReturnDetail(id, auth.user.organizationId) });
   } catch (error) {
     console.error(error);
     return apiError('Não foi possível finalizar a devolução.', 500);

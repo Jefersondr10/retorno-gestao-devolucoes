@@ -17,14 +17,16 @@ export async function GET(request: Request) {
       .prepare(
         `SELECT o.code, o.type, o.label, o.color, o.is_system, o.sort_order, o.active, o.requires_invoice, o.requires_notes,
           CASE o.type
-            WHEN 'STORE' THEN (SELECT COUNT(*) FROM returns r WHERE r.store = o.label)
-            WHEN 'LOCATION' THEN (SELECT COUNT(*) FROM returns r WHERE r.received_location = o.label)
-            WHEN 'CONDITION' THEN (SELECT COUNT(*) FROM return_items i WHERE i.condition = o.code)
+            WHEN 'STORE' THEN (SELECT COUNT(*) FROM returns r WHERE r.organization_id = o.organization_id AND r.store = o.label)
+            WHEN 'LOCATION' THEN (SELECT COUNT(*) FROM returns r WHERE r.organization_id = o.organization_id AND r.received_location = o.label)
+            WHEN 'CONDITION' THEN (SELECT COUNT(*) FROM return_items i INNER JOIN returns r ON r.id = i.return_id WHERE r.organization_id = o.organization_id AND i.condition = o.code)
             ELSE 0
           END AS usage_count
-         FROM config_options o ${includeInactive ? '' : 'WHERE o.active = 1'}
+         FROM tenant_config_options o
+         WHERE o.organization_id = ? ${includeInactive ? '' : 'AND o.active = 1'}
          ORDER BY o.type, o.active DESC, o.sort_order, o.label`,
       )
+      .bind(auth.user.organizationId)
       .all<Record<string, unknown>>();
     const rows = result.results;
     return Response.json({
@@ -69,26 +71,27 @@ export async function POST(request: Request) {
     const { db } = getBindings();
 
     const duplicate = await db
-      .prepare('SELECT code FROM config_options WHERE type = ? AND LOWER(label) = LOWER(?) LIMIT 1')
-      .bind(type, label)
+      .prepare('SELECT code FROM tenant_config_options WHERE organization_id = ? AND type = ? AND LOWER(label) = LOWER(?) LIMIT 1')
+      .bind(auth.user.organizationId, type, label)
       .first();
     if (duplicate) return apiError('Já existe um cadastro com este nome.', 409);
 
     await db.batch([
       db
         .prepare(
-          `INSERT INTO config_options
-           (code, type, label, color, is_system, sort_order, active, requires_invoice, requires_notes, created_at)
-           VALUES (?, ?, ?, ?, 0, 100, 1, ?, ?, ?)`,
+          `INSERT INTO tenant_config_options
+           (organization_id, code, type, label, color, is_system, sort_order, active, requires_invoice, requires_notes, created_at)
+           VALUES (?, ?, ?, ?, ?, 0, 100, 1, ?, ?, ?)`,
         )
-        .bind(code, type, label, color, requiresInvoice, requiresNotes, now),
+        .bind(auth.user.organizationId, code, type, label, color, requiresInvoice, requiresNotes, now),
       db
         .prepare(
-          `INSERT INTO audit_events (id, return_id, actor, action, details, created_at)
-           VALUES (?, NULL, ?, 'CONFIG_OPTION_CREATED', ?, ?)`,
+          `INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at)
+           VALUES (?, ?, NULL, ?, 'CONFIG_OPTION_CREATED', ?, ?)`,
         )
         .bind(
           crypto.randomUUID(),
+          auth.user.organizationId,
           actorLabel(auth.user),
           JSON.stringify({ code, type, label, color, requiresInvoice, requiresNotes }),
           now,

@@ -12,7 +12,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     await ensureSchema();
     const { id } = await context.params;
     const { db, files } = getBindings();
-    const current = await db.prepare('SELECT protocol, status FROM returns WHERE id = ?').bind(id).first<{ protocol: string; status: string }>();
+    const current = await db.prepare('SELECT protocol, status FROM returns WHERE id = ? AND organization_id = ?').bind(id, auth.user.organizationId).first<{ protocol: string; status: string }>();
     if (!current) return apiError('Devolução não encontrada.', 404);
     if (current.status !== 'FINALIZED') return apiError('Os vídeos só podem ser excluídos depois que a devolução for finalizada.', 409);
 
@@ -33,11 +33,12 @@ export async function DELETE(request: Request, context: RouteContext) {
     };
     await db.batch([
       db.prepare('DELETE FROM return_videos WHERE return_id = ?').bind(id),
-      db.prepare('UPDATE returns SET updated_by = ?, updated_at = ? WHERE id = ?').bind(actor, now, id),
+      db.prepare('UPDATE returns SET updated_by = ?, updated_at = ? WHERE id = ? AND organization_id = ?').bind(actor, now, id, auth.user.organizationId),
       db
-        .prepare("INSERT INTO audit_events (id, return_id, actor, action, details, created_at) VALUES (?, ?, ?, 'VIDEOS_DELETION_PENDING', ?, ?)")
+        .prepare("INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at) VALUES (?, ?, ?, ?, 'VIDEOS_DELETION_PENDING', ?, ?)")
         .bind(
           auditId,
+          auth.user.organizationId,
           id,
           actor,
           JSON.stringify(details),
@@ -49,8 +50,8 @@ export async function DELETE(request: Request, context: RouteContext) {
     try {
       await files.delete(details.objectKeys);
       await db
-        .prepare("UPDATE audit_events SET action = 'VIDEOS_DELETED', details = ? WHERE id = ?")
-        .bind(JSON.stringify({ ...details, storageDeletedAt: new Date().toISOString() }), auditId)
+        .prepare("UPDATE audit_events SET action = 'VIDEOS_DELETED', details = ? WHERE id = ? AND organization_id = ?")
+        .bind(JSON.stringify({ ...details, storageDeletedAt: new Date().toISOString() }), auditId, auth.user.organizationId)
         .run();
     } catch (storageError) {
       storagePending = true;

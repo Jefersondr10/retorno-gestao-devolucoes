@@ -12,10 +12,11 @@ export async function GET(request: Request) {
     const includeInactive = new URL(request.url).searchParams.get('includeInactive') === 'true';
     const result = await db
       .prepare(`SELECT s.code, s.label, s.color, s.is_system, s.sort_order, s.active,
-        (SELECT COUNT(*) FROM returns r WHERE r.status = s.code) AS usage_count
-        FROM status_definitions s
-        ${includeInactive ? '' : 'WHERE s.active = 1'}
+        (SELECT COUNT(*) FROM returns r WHERE r.organization_id = s.organization_id AND r.status = s.code) AS usage_count
+        FROM tenant_status_definitions s
+        WHERE s.organization_id = ? ${includeInactive ? '' : 'AND s.active = 1'}
         ORDER BY s.active DESC, s.sort_order, s.label`)
+      .bind(auth.user.organizationId)
       .all();
     return Response.json({ items: result.results });
   } catch (error) {
@@ -51,16 +52,16 @@ export async function POST(request: Request) {
     await db.batch([
       db
         .prepare(
-          `INSERT INTO status_definitions (code, label, color, is_system, sort_order, active)
-           VALUES (?, ?, ?, 0, 100, 1)`,
+          `INSERT INTO tenant_status_definitions (organization_id, code, label, color, is_system, sort_order, active)
+           VALUES (?, ?, ?, ?, 0, 100, 1)`,
         )
-        .bind(code, label, color),
+        .bind(auth.user.organizationId, code, label, color),
       db
         .prepare(
-          `INSERT INTO audit_events (id, return_id, actor, action, details, created_at)
-           VALUES (?, NULL, ?, 'STATUS_CREATED', ?, ?)`,
+          `INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at)
+           VALUES (?, ?, NULL, ?, 'STATUS_CREATED', ?, ?)`,
         )
-        .bind(crypto.randomUUID(), actorLabel(auth.user), JSON.stringify({ code, label, color }), new Date().toISOString()),
+        .bind(crypto.randomUUID(), auth.user.organizationId, actorLabel(auth.user), JSON.stringify({ code, label, color }), new Date().toISOString()),
     ]);
     return Response.json({ item: { code, label, color, is_system: 0, sort_order: 100, active: 1 } }, { status: 201 });
   } catch (error) {
