@@ -134,6 +134,32 @@ export const organizationMemberships = sqliteTable(
   ],
 );
 
+export const organizationQuotaReservations = sqliteTable(
+  'organization_quota_reservations',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    returnId: text('return_id').notNull(),
+    returnCount: integer('return_count').notNull().default(1),
+    mediaBytes: integer('media_bytes').notNull().default(0),
+    objectKeysJson: text('object_keys_json').notNull().default('[]'),
+    expiresAt: text('expires_at').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_quota_reservations_org_expires').on(table.organizationId, table.expiresAt),
+    uniqueIndex('idx_quota_reservations_return_id').on(table.returnId),
+    check('quota_reservation_return_count_check', sql`${table.returnCount} > 0`),
+    check('quota_reservation_media_bytes_check', sql`${table.mediaBytes} >= 0`),
+    check(
+      'quota_reservation_object_keys_json_check',
+      sql`json_valid(${table.objectKeysJson}) = 1 AND json_type(${table.objectKeysJson}) = 'array'`,
+    ),
+  ],
+);
+
 export const authSessions = sqliteTable(
   'auth_sessions',
   {

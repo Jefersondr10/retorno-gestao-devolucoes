@@ -57,6 +57,13 @@
       "when": 1788239000000,
       "tag": "0007_multi_tenant_self_signup",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788320293518,
+      "tag": "0008_atomic_quota_reservations",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 import { actorLabel, authenticateApi } from '@/lib/auth';
 import { apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
-import { completeStorageDeletionEvents, prepareStorageDeletionOutbox } from '@/lib/retention';
+import { completeStorageDeletionEvents, prepareStorageDeletionOutbox, queuedStorageObjects } from '@/lib/retention';
 import { getBlockingReasons, updateReturnSchema } from '@/lib/returns';
 
 export const dynamic = 'force-dynamic';
@@ -10,15 +10,6 @@ type RouteContext = { params: Promise<{ id: string }> };
 function nextMutationTimestamp(previous: string) {
   const previousTime = Date.parse(previous);
   return new Date(Math.max(Date.now(), Number.isNaN(previousTime) ? 0 : previousTime + 1)).toISOString();
-}
-
-function queuedObjectKeys(details: string | null) {
-  try {
-    const parsed = JSON.parse(details || '{}') as { objectKeys?: unknown };
-    return Array.isArray(parsed.objectKeys) ? parsed.objectKeys.filter((key): key is string => typeof key === 'string' && key.length > 0) : [];
-  } catch {
-    return [];
-  }
 }
 
 export async function GET(request: Request, context: RouteContext) {
@@ -214,21 +205,21 @@ export async function DELETE(request: Request, context: RouteContext) {
 
     const { db } = getBindings();
     const [photos, videos, pendingVideoDeletions] = await Promise.all([
-      db.prepare('SELECT object_key FROM return_photos WHERE return_id = ?').bind(id).all<{ object_key: string }>(),
-      db.prepare('SELECT object_key FROM return_videos WHERE return_id = ?').bind(id).all<{ object_key: string }>(),
+      db.prepare('SELECT object_key, size FROM return_photos WHERE return_id = ?').bind(id).all<{ object_key: string; size: number }>(),
+      db.prepare('SELECT object_key, size FROM return_videos WHERE return_id = ?').bind(id).all<{ object_key: string; size: number }>(),
       db.prepare("SELECT details FROM audit_events WHERE return_id = ? AND action = 'VIDEOS_DELETION_PENDING'").bind(id).all<{ details: string | null }>(),
     ]);
-    const objectKeys = [...new Set([
-      ...photos.results.map((photo) => photo.object_key),
-      ...videos.results.map((video) => video.object_key),
-      ...pendingVideoDeletions.results.flatMap((event) => queuedObjectKeys(event.details)),
-    ])];
+    const objects = [
+      ...photos.results.map((photo) => ({ objectKey: photo.object_key, size: Number(photo.size || 0) })),
+      ...videos.results.map((video) => ({ objectKey: video.object_key, size: Number(video.size || 0) })),
+      ...pendingVideoDeletions.results.flatMap((event) => queuedStorageObjects(event.details)),
+    ];
 
     const now = new Date().toISOString();
     const actor = actorLabel(auth.user);
     const outbox = prepareStorageDeletionOutbox(db, {
       organizationId: auth.user.organizationId,
-      objectKeys,
+      objects,
       actor,
       now,
       reason: 'RETURN_DELETED',

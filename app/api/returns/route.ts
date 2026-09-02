@@ -1,7 +1,8 @@
 import { actorLabel, authenticateApi, consumeOrganizationActionRateLimit } from '@/lib/auth';
 import { apiError, ensureSchema, getBindings, getReturnDetail } from '@/lib/data';
+import { readBoundedFormData } from '@/lib/request-body';
 import { createReturnSchema } from '@/lib/returns';
-import { runRetentionCleanup } from '@/lib/retention';
+import { flushPendingStorageDeletions, runRetentionCleanup } from '@/lib/retention';
 import { readVideoDurationMs } from '@/lib/video-metadata';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,7 @@ const MAX_MULTIPART_BYTES = 64 * 1024 * 1024;
 const MAX_ORGANIZATION_STORAGE_BYTES = 1024 * 1024 * 1024;
 const MAX_ORGANIZATION_RETURNS = 25_000;
 const MAX_RETURN_CREATIONS_PER_WINDOW = 150;
+const QUOTA_RESERVATION_TTL_MS = 30 * 60 * 1000;
 
 async function detectPhotoContentType(file: File) {
   const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
@@ -36,6 +38,42 @@ async function detectVideoContentType(file: File) {
     return 'video/mp4';
   }
   return '';
+}
+
+async function cleanupExpiredQuotaReservations(db: D1Database, files: R2Bucket, organizationId: string, nowIso: string) {
+  const expired = await db
+    .prepare(`SELECT id, return_id, object_keys_json
+      FROM organization_quota_reservations
+      WHERE organization_id = ? AND expires_at <= ?
+      ORDER BY expires_at
+      LIMIT 20`)
+    .bind(organizationId, nowIso)
+    .all<{ id: string; return_id: string; object_keys_json: string }>();
+
+  for (const reservation of expired.results) {
+    try {
+      const committedReturn = await db
+        .prepare('SELECT id FROM returns WHERE id = ? AND organization_id = ?')
+        .bind(reservation.return_id, organizationId)
+        .first();
+      if (committedReturn) {
+        await db.prepare('DELETE FROM organization_quota_reservations WHERE id = ? AND organization_id = ?')
+          .bind(reservation.id, organizationId)
+          .run();
+        continue;
+      }
+      const parsedKeys = JSON.parse(reservation.object_keys_json) as unknown;
+      const keys = Array.isArray(parsedKeys) ? parsedKeys.filter((key): key is string => typeof key === 'string') : [];
+      const deletions = await Promise.allSettled(keys.map((key) => files.delete(key)));
+      if (deletions.every((result) => result.status === 'fulfilled')) {
+        await db.prepare('DELETE FROM organization_quota_reservations WHERE id = ? AND organization_id = ?')
+          .bind(reservation.id, organizationId)
+          .run();
+      }
+    } catch (cleanupError) {
+      console.error('Expired quota reservation cleanup failed', cleanupError);
+    }
+  }
 }
 
 export async function GET(request: Request) {
@@ -106,7 +144,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const uploadedKeys: string[] = [];
+  let plannedObjectKeys: string[] = [];
+  let quotaReservationId: string | null = null;
+  let returnId: string | null = null;
+  let databaseCommitted = false;
   try {
     const auth = await authenticateApi(request, { roles: ['ADMIN', 'OPERATOR'] });
     if ('response' in auth) return auth.response;
@@ -121,11 +162,18 @@ export async function POST(request: Request) {
       return apiError('Muitos cadastros foram enviados em pouco tempo. Aguarde alguns minutos e tente novamente.', 429);
     }
     const actor = actorLabel(auth.user);
-    const declaredBodyBytes = Number(request.headers.get('content-length'));
-    if (Number.isFinite(declaredBodyBytes) && declaredBodyBytes > MAX_MULTIPART_BYTES) {
-      return apiError('O envio ficou grande demais. Reduza o vídeo ou a quantidade de fotos.', 413);
+    const contentType = request.headers.get('content-type') || '';
+    const contentEncoding = (request.headers.get('content-encoding') || 'identity').toLowerCase();
+    if (!contentType.toLowerCase().startsWith('multipart/form-data;') || contentEncoding !== 'identity') {
+      return apiError('O formato do envio não é válido.', 400);
     }
-    const formData = await request.formData();
+    const boundedFormData = await readBoundedFormData(request, MAX_MULTIPART_BYTES);
+    if (!boundedFormData.ok) {
+      return boundedFormData.status === 413
+        ? apiError('O envio ficou grande demais. Reduza o vídeo ou a quantidade de fotos.', 413)
+        : apiError(boundedFormData.error, 400);
+    }
+    const formData = boundedFormData.value;
     const getText = (name: string) => {
       const value = formData.get(name);
       return typeof value === 'string' ? value : '';
@@ -180,19 +228,114 @@ export async function POST(request: Request) {
       preparedVideos.push({ file: video, contentType, durationMs: measuredDurationMs });
     }
 
-    const usage = await db.prepare(`SELECT
-      (SELECT COUNT(*) FROM returns WHERE organization_id = ?) AS return_count,
-      (SELECT COALESCE(SUM(p.size), 0) FROM return_photos p INNER JOIN returns r ON r.id = p.return_id WHERE r.organization_id = ?)
-        + (SELECT COALESCE(SUM(v.size), 0) FROM return_videos v INNER JOIN returns r ON r.id = v.return_id WHERE r.organization_id = ?) AS storage_bytes`)
-      .bind(auth.user.organizationId, auth.user.organizationId, auth.user.organizationId)
-      .first<{ return_count: number; storage_bytes: number }>();
-    if (Number(usage?.return_count || 0) >= MAX_ORGANIZATION_RETURNS) {
-      return apiError('Esta empresa atingiu o limite de devoluções armazenadas. Exclua registros antigos antes de continuar.', 409);
-    }
+    const id = crypto.randomUUID();
+    returnId = id;
+    const photoRows = preparedPhotos.map(({ file: photo, contentType }) => {
+      const photoId = crypto.randomUUID();
+      const safeName = photo.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120) || 'foto.jpg';
+      return {
+        id: photoId,
+        key: `organizations/${auth.user.organizationId}/returns/${id}/photos/${photoId}-${safeName}`,
+        fileName: photo.name,
+        contentType,
+        size: photo.size,
+      };
+    });
+    const videoRows = preparedVideos.map((video) => {
+      const videoId = crypto.randomUUID();
+      const safeName = video.file.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120)
+        || (video.contentType === 'video/quicktime' ? 'video.mov' : 'video.mp4');
+      return {
+        id: videoId,
+        key: `organizations/${auth.user.organizationId}/returns/${id}/videos/${videoId}-${safeName}`,
+        fileName: video.file.name,
+        contentType: video.contentType,
+        size: video.file.size,
+        durationMs: video.durationMs,
+      };
+    });
+    plannedObjectKeys = [...photoRows.map((photo) => photo.key), ...videoRows.map((video) => video.key)];
     const incomingBytes = [...preparedPhotos, ...preparedVideos].reduce((total, item) => total + item.file.size, 0);
-    if (Number(usage?.storage_bytes || 0) + incomingBytes > MAX_ORGANIZATION_STORAGE_BYTES) {
-      return apiError('Esta empresa atingiu o limite de armazenamento. Exclua fotos ou vídeos antigos antes de continuar.', 413);
+    await flushPendingStorageDeletions(auth.user.organizationId);
+    const quotaNow = new Date();
+    const quotaNowIso = quotaNow.toISOString();
+    await cleanupExpiredQuotaReservations(db, files, auth.user.organizationId, quotaNowIso);
+    quotaReservationId = crypto.randomUUID();
+    const reservation = await db.prepare(
+      `INSERT INTO organization_quota_reservations
+        (id, organization_id, return_id, return_count, media_bytes, object_keys_json, expires_at, created_at)
+       SELECT ?1, ?2, ?3, 1, ?4, ?5, ?6, ?7
+       WHERE
+         (SELECT COUNT(*) FROM returns WHERE organization_id = ?2)
+           + (SELECT COALESCE(SUM(return_count), 0) FROM organization_quota_reservations
+              WHERE organization_id = ?2) < ?8
+         AND
+         (SELECT COALESCE(SUM(p.size), 0) FROM return_photos p
+            INNER JOIN returns r ON r.id = p.return_id WHERE r.organization_id = ?2)
+           + (SELECT COALESCE(SUM(v.size), 0) FROM return_videos v
+              INNER JOIN returns r ON r.id = v.return_id WHERE r.organization_id = ?2)
+           + (SELECT COALESCE(SUM(media_bytes), 0) FROM organization_quota_reservations
+              WHERE organization_id = ?2)
+           + (SELECT COALESCE(SUM(
+                CASE WHEN json_valid(deletion_event.details) THEN
+                  CASE WHEN json_type(deletion_event.details, '$.bytes') IN ('integer', 'real')
+                    THEN MAX(CAST(json_extract(deletion_event.details, '$.bytes') AS INTEGER), 0)
+                    WHEN json_type(deletion_event.details, '$.objectKeys') = 'array'
+                      AND json_array_length(deletion_event.details, '$.objectKeys') > 0 THEN 1073741824
+                    ELSE 0 END
+                ELSE 0 END
+              ), 0)
+              FROM audit_events deletion_event
+              WHERE deletion_event.organization_id = ?2
+                AND deletion_event.action IN ('VIDEOS_DELETION_PENDING', 'STORAGE_DELETION_PENDING'))
+           + ?4 <= ?9
+       RETURNING id`,
+    )
+      .bind(
+        quotaReservationId,
+        auth.user.organizationId,
+        id,
+        incomingBytes,
+        JSON.stringify(plannedObjectKeys),
+        new Date(quotaNow.getTime() + QUOTA_RESERVATION_TTL_MS).toISOString(),
+        quotaNowIso,
+        MAX_ORGANIZATION_RETURNS,
+        MAX_ORGANIZATION_STORAGE_BYTES,
+      )
+      .first<{ id: string }>();
+    if (!reservation) {
+      quotaReservationId = null;
+      const usage = await db.prepare(`SELECT
+        (SELECT COUNT(*) FROM returns WHERE organization_id = ?1)
+          + (SELECT COALESCE(SUM(return_count), 0) FROM organization_quota_reservations
+             WHERE organization_id = ?1) AS return_count,
+        (SELECT COALESCE(SUM(p.size), 0) FROM return_photos p INNER JOIN returns r ON r.id = p.return_id WHERE r.organization_id = ?1)
+          + (SELECT COALESCE(SUM(v.size), 0) FROM return_videos v INNER JOIN returns r ON r.id = v.return_id WHERE r.organization_id = ?1)
+          + (SELECT COALESCE(SUM(media_bytes), 0) FROM organization_quota_reservations
+             WHERE organization_id = ?1) AS storage_bytes,
+        (SELECT COALESCE(SUM(
+              CASE WHEN json_valid(deletion_event.details) THEN
+                CASE WHEN json_type(deletion_event.details, '$.bytes') IN ('integer', 'real')
+                  THEN MAX(CAST(json_extract(deletion_event.details, '$.bytes') AS INTEGER), 0)
+                  WHEN json_type(deletion_event.details, '$.objectKeys') = 'array'
+                    AND json_array_length(deletion_event.details, '$.objectKeys') > 0 THEN 1073741824
+                  ELSE 0 END
+              ELSE 0 END
+            ), 0)
+            FROM audit_events deletion_event
+            WHERE deletion_event.organization_id = ?1
+              AND deletion_event.action IN ('VIDEOS_DELETION_PENDING', 'STORAGE_DELETION_PENDING')) AS pending_storage_bytes`)
+        .bind(auth.user.organizationId)
+        .first<{ return_count: number; storage_bytes: number; pending_storage_bytes: number }>();
+      if (Number(usage?.return_count || 0) >= MAX_ORGANIZATION_RETURNS) {
+        return apiError('Esta empresa atingiu o limite de devoluções armazenadas. Exclua registros antigos antes de continuar.', 409);
+      }
+      if (Number(usage?.storage_bytes || 0) + Number(usage?.pending_storage_bytes || 0) + incomingBytes > MAX_ORGANIZATION_STORAGE_BYTES) {
+        return apiError('Esta empresa atingiu o limite de armazenamento. Aguarde a limpeza dos arquivos ou exclua mídias antigas.', 413);
+      }
+      return apiError('Não foi possível reservar espaço para este envio. Tente novamente em instantes.', 409);
     }
+    const activeReservationId = reservation.id;
 
     const duplicateParts: string[] = [];
     const duplicateValues: string[] = [];
@@ -215,43 +358,19 @@ export async function POST(request: Request) {
 
     const sequenceResult = await db.prepare('INSERT INTO return_sequences DEFAULT VALUES').run();
     const sequence = Number(sequenceResult.meta.last_row_id);
-    const id = crypto.randomUUID();
     const protocol = `DEV-${String(sequence).padStart(6, '0')}`;
     const now = new Date().toISOString();
     const status = data.source === 'PHOTO' ? 'PENDING_INFO' : 'IN_TRIAGE';
 
-    const photoRows: Array<{
-      id: string;
-      key: string;
-      fileName: string;
-      contentType: string;
-      size: number;
-    }> = [];
-    const videoRows: Array<{
-      id: string;
-      key: string;
-      fileName: string;
-      contentType: string;
-      size: number;
-      durationMs: number;
-    }> = [];
-
-    for (const preparedPhoto of preparedPhotos) {
-      const { file: photo, contentType } = preparedPhoto;
-      const photoId = crypto.randomUUID();
-      const safeName = photo.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120) || 'foto.jpg';
-      const key = `organizations/${auth.user.organizationId}/returns/${id}/photos/${photoId}-${safeName}`;
-      await files.put(key, photo.stream(), { httpMetadata: { contentType } });
-      uploadedKeys.push(key);
-      photoRows.push({ id: photoId, key, fileName: photo.name, contentType, size: photo.size });
+    for (let index = 0; index < preparedPhotos.length; index += 1) {
+      const preparedPhoto = preparedPhotos[index];
+      const photo = photoRows[index];
+      await files.put(photo.key, preparedPhoto.file.stream(), { httpMetadata: { contentType: preparedPhoto.contentType } });
     }
-    for (const video of preparedVideos) {
-      const videoId = crypto.randomUUID();
-      const safeName = video.file.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120) || (video.contentType === 'video/webm' ? 'video.webm' : video.contentType === 'video/quicktime' ? 'video.mov' : 'video.mp4');
-      const key = `organizations/${auth.user.organizationId}/returns/${id}/videos/${videoId}-${safeName}`;
-      await files.put(key, video.file.stream(), { httpMetadata: { contentType: video.contentType } });
-      uploadedKeys.push(key);
-      videoRows.push({ id: videoId, key, fileName: video.file.name, contentType: video.contentType, size: video.file.size, durationMs: video.durationMs });
+    for (let index = 0; index < preparedVideos.length; index += 1) {
+      const preparedVideo = preparedVideos[index];
+      const video = videoRows[index];
+      await files.put(video.key, preparedVideo.file.stream(), { httpMetadata: { contentType: preparedVideo.contentType } });
     }
 
     const operations = [
@@ -261,7 +380,15 @@ export async function POST(request: Request) {
             id, organization_id, protocol, store, received_location, received_at, order_id,
             tracking_code, status, notes, source, created_by, created_at,
             updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+          WHERE EXISTS (
+            SELECT 1 FROM organization_quota_reservations reservation
+            WHERE reservation.id = ?16
+              AND reservation.organization_id = ?2
+              AND reservation.return_id = ?1
+              AND reservation.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          )`,
         )
         .bind(
           id,
@@ -279,6 +406,7 @@ export async function POST(request: Request) {
           now,
           actor,
           now,
+          activeReservationId,
         ),
       db
         .prepare(
@@ -327,16 +455,38 @@ export async function POST(request: Request) {
           .bind(video.id, id, video.key, video.fileName, video.contentType, video.size, video.durationMs, actor, now),
       );
     }
+    operations.push(
+      db.prepare('DELETE FROM organization_quota_reservations WHERE id = ? AND organization_id = ? AND return_id = ?')
+        .bind(activeReservationId, auth.user.organizationId, id),
+    );
 
     await db.batch(operations);
     const created = await getReturnDetail(id, auth.user.organizationId);
+    if (!created) throw new Error('A reserva de capacidade expirou antes da conclusão do cadastro.');
+    databaseCommitted = true;
+    quotaReservationId = null;
     await runRetentionCleanup({ organizationId: auth.user.organizationId, actor: 'Sistema · limpeza automática' }).catch((cleanupError) => console.error('Automatic retention cleanup failed', cleanupError));
     return Response.json({ item: created, duplicates }, { status: 201 });
   } catch (error) {
     console.error(error);
     try {
-      const { files } = getBindings();
-      await Promise.all(uploadedKeys.map((key) => files.delete(key)));
+      const { db, files } = getBindings();
+      let uncommittedStateConfirmed = returnId === null;
+      if (!databaseCommitted && returnId) {
+        try {
+          const committedReturn = await db.prepare('SELECT id FROM returns WHERE id = ?').bind(returnId).first();
+          databaseCommitted = Boolean(committedReturn);
+          uncommittedStateConfirmed = !committedReturn;
+        } catch (confirmationError) {
+          console.error('Return commit confirmation failed', confirmationError);
+        }
+      }
+      if (!databaseCommitted && uncommittedStateConfirmed) {
+        const deletions = await Promise.allSettled(plannedObjectKeys.map((key) => files.delete(key)));
+        if (quotaReservationId && deletions.every((result) => result.status === 'fulfilled')) {
+          await db.prepare('DELETE FROM organization_quota_reservations WHERE id = ?').bind(quotaReservationId).run();
+        }
+      }
     } catch {
       // A cleanup failure must not hide the original error.
     }

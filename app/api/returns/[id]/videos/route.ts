@@ -30,6 +30,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       bytes: videos.results.reduce((total, video) => total + video.size, 0),
       files: videos.results.map((video) => video.file_name),
       objectKeys: videos.results.map((video) => video.object_key),
+      objects: videos.results.map((video) => ({ objectKey: video.object_key, size: Number(video.size || 0) })),
     };
     await db.batch([
       db.prepare('DELETE FROM return_videos WHERE return_id = ?').bind(id),

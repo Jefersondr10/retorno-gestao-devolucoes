@@ -5,6 +5,7 @@ const PENDING_DELETION_EVENT_LIMIT = 20;
 const STORAGE_DELETE_BATCH_SIZE = 500;
 const STORAGE_OUTBOX_KEY_CHUNK_SIZE = 250;
 const SQL_BIND_CHUNK_SIZE = 90;
+const LEGACY_UNKNOWN_STORAGE_BYTES = 1024 * 1024 * 1024;
 
 type PendingStorageDeletionAction = 'VIDEOS_DELETION_PENDING' | 'STORAGE_DELETION_PENDING';
 
@@ -13,6 +14,11 @@ export type PendingStorageDeletion = {
   organizationId: string;
   action: PendingStorageDeletionAction;
   objectKeys: string[];
+};
+
+export type StorageObjectDeletion = {
+  objectKey: string;
+  size: number;
 };
 
 export type RetentionPolicy = {
@@ -42,13 +48,47 @@ function cutoffIso(days: number) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-function queuedObjectKeys(details: string | null) {
+function uniqueStorageObjects(objects: StorageObjectDeletion[]) {
+  const byKey = new Map<string, number>();
+  for (const object of objects) {
+    if (!object.objectKey) continue;
+    const size = Number.isFinite(object.size) ? Math.max(0, Math.trunc(object.size)) : 0;
+    byKey.set(object.objectKey, Math.max(byKey.get(object.objectKey) || 0, size));
+  }
+  return [...byKey.entries()].map(([objectKey, size]) => ({ objectKey, size }));
+}
+
+export function queuedStorageObjects(details: string | null): StorageObjectDeletion[] {
   try {
-    const parsed = JSON.parse(details || '{}') as { objectKeys?: unknown };
-    return Array.isArray(parsed.objectKeys) ? parsed.objectKeys.filter((key): key is string => typeof key === 'string' && key.length > 0) : [];
+    const parsed = JSON.parse(details || '{}') as { objects?: unknown; objectKeys?: unknown; bytes?: unknown };
+    if (Array.isArray(parsed.objects)) {
+      const objects = parsed.objects.flatMap((value) => {
+        if (!value || typeof value !== 'object') return [];
+        const candidate = value as { objectKey?: unknown; size?: unknown };
+        if (typeof candidate.objectKey !== 'string' || !candidate.objectKey) return [];
+        const size = Number(candidate.size);
+        return [{ objectKey: candidate.objectKey, size: Number.isFinite(size) ? Math.max(0, size) : 0 }];
+      });
+      if (objects.length) return uniqueStorageObjects(objects);
+    }
+    const objectKeys = Array.isArray(parsed.objectKeys)
+      ? parsed.objectKeys.filter((key): key is string => typeof key === 'string' && key.length > 0)
+      : [];
+    const bytes = Number(parsed.bytes);
+    const fallbackBytes = objectKeys.length ? LEGACY_UNKNOWN_STORAGE_BYTES : 0;
+    return uniqueStorageObjects(
+      objectKeys.map((objectKey, index) => ({
+        objectKey,
+        size: index === 0 ? (Number.isFinite(bytes) ? Math.max(0, bytes) : fallbackBytes) : 0,
+      })),
+    );
   } catch {
     return [];
   }
+}
+
+function queuedObjectKeys(details: string | null) {
+  return queuedStorageObjects(details).map((object) => object.objectKey);
 }
 
 function chunksOf<T>(values: T[], size: number) {
@@ -71,19 +111,21 @@ export function prepareStorageDeletionOutbox(
   db: D1Database,
   input: {
     organizationId: string;
-    objectKeys: string[];
+    objects: StorageObjectDeletion[];
     actor: string;
     now: string;
     reason: string;
     details?: Record<string, unknown>;
   },
 ) {
-  const objectKeyChunks = chunksOf(uniqueObjectKeys(input.objectKeys), STORAGE_OUTBOX_KEY_CHUNK_SIZE);
+  const objectChunks = chunksOf(uniqueStorageObjects(input.objects), STORAGE_OUTBOX_KEY_CHUNK_SIZE);
   const events: PendingStorageDeletion[] = [];
   const operations: D1PreparedStatement[] = [];
 
-  objectKeyChunks.forEach((objectKeys, index) => {
+  objectChunks.forEach((objects, index) => {
     const id = crypto.randomUUID();
+    const objectKeys = objects.map((object) => object.objectKey);
+    const bytes = objects.reduce((total, object) => total + object.size, 0);
     events.push({ id, organizationId: input.organizationId, action: 'STORAGE_DELETION_PENDING', objectKeys });
     operations.push(
       db
@@ -96,8 +138,10 @@ export function prepareStorageDeletionOutbox(
             ...input.details,
             reason: input.reason,
             chunk: index + 1,
-            chunks: objectKeyChunks.length,
+            chunks: objectChunks.length,
             objectKeys,
+            objects,
+            bytes,
           }),
           input.now,
         ),
@@ -143,7 +187,7 @@ export async function completeStorageDeletionEvents(events: PendingStorageDeleti
   }
 }
 
-async function flushPendingStorageDeletions(organizationId: string) {
+export async function flushPendingStorageDeletions(organizationId: string) {
   const { db } = getBindings();
   const pending = await db
     .prepare(
@@ -278,15 +322,15 @@ export async function runRetentionCleanup({ organizationId, force = false, actor
       db.prepare(`SELECT id, object_key, size FROM return_videos WHERE return_id IN (${placeholders})`).bind(...returnIds).all<{ id: string; object_key: string; size: number }>(),
       db.prepare(`SELECT details FROM audit_events WHERE return_id IN (${placeholders}) AND action = 'VIDEOS_DELETION_PENDING'`).bind(...returnIds).all<{ details: string | null }>(),
     ]);
-    const objectKeys = [...new Set([
-      ...returnPhotos.results.map((photo) => photo.object_key),
-      ...returnVideos.results.map((video) => video.object_key),
-      ...pendingDeletionEvents.results.flatMap((event) => queuedObjectKeys(event.details)),
-    ])];
+    const objects = [
+      ...returnPhotos.results.map((photo) => ({ objectKey: photo.object_key, size: Number(photo.size || 0) })),
+      ...returnVideos.results.map((video) => ({ objectKey: video.object_key, size: Number(video.size || 0) })),
+      ...pendingDeletionEvents.results.flatMap((event) => queuedStorageObjects(event.details)),
+    ];
     const queuedAt = new Date().toISOString();
     const outbox = prepareStorageDeletionOutbox(db, {
       organizationId,
-      objectKeys,
+      objects,
       actor,
       now: queuedAt,
       reason: 'RETURN_RETENTION',
@@ -335,12 +379,12 @@ export async function runRetentionCleanup({ organizationId, force = false, actor
       .bind(organizationId, photoCutoff)
       .all<{ id: string; object_key: string; size: number }>(),
   ]);
-  const expiredMediaKeys = [...expiredPhotos.results, ...expiredVideos.results].map((media) => media.object_key);
-  if (expiredMediaKeys.length) {
+  const expiredMedia = [...expiredPhotos.results, ...expiredVideos.results];
+  if (expiredMedia.length) {
     const queuedAt = new Date().toISOString();
     const outbox = prepareStorageDeletionOutbox(db, {
       organizationId,
-      objectKeys: expiredMediaKeys,
+      objects: expiredMedia.map((media) => ({ objectKey: media.object_key, size: Number(media.size || 0) })),
       actor,
       now: queuedAt,
       reason: 'MEDIA_RETENTION',
