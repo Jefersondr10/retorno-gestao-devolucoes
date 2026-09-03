@@ -15,11 +15,13 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { apiFetch } from '@/lib/api-client';
 import type { AuthUser } from '@/lib/auth';
+import { hasAnyUserPermission, SETTINGS_PERMISSIONS } from '@/lib/permissions';
 
 export function UserMenu({ user }: { user: AuthUser }) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const initials = user.displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'U';
+  const canOpenAdministration = hasAnyUserPermission(user, SETTINGS_PERMISSIONS);
 
   async function logout() {
     setLoggingOut(true);
@@ -45,11 +47,11 @@ export function UserMenu({ user }: { user: AuthUser }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64 rounded-xl p-2">
         <DropdownMenuGroup>
-          <DropdownMenuLabel className="px-2 py-2"><span className="block truncate text-sm font-semibold text-foreground">{user.displayName}</span><span className="mt-0.5 block truncate font-normal text-muted-foreground">{user.organizationName}</span><span className="mt-1 block truncate font-normal text-muted-foreground">@{user.username} · {user.role === 'ADMIN' ? 'Administrador' : 'Operação'}</span></DropdownMenuLabel>
+        <DropdownMenuLabel className="px-2 py-2"><span className="block truncate text-sm font-semibold text-foreground">{user.displayName}</span><span className="mt-0.5 block truncate font-normal text-muted-foreground">{user.organizationName}</span><span className="mt-1 block truncate font-normal text-muted-foreground">@{user.username} · {user.role === 'ADMIN' ? 'Administrador' : `${user.permissions.length} acessos`}</span></DropdownMenuLabel>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         {user.passwordLoginEnabled && <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => window.location.assign('/alterar-senha')}><KeyRound /> Trocar minha senha</DropdownMenuItem>}
-        {user.role === 'ADMIN' && <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => window.location.assign('/configuracoes')}><ShieldCheck /> Administração</DropdownMenuItem>}
+        {canOpenAdministration && <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => window.location.assign('/configuracoes')}><ShieldCheck /> Administração</DropdownMenuItem>}
         <DropdownMenuSeparator />
         {logoutError && <p className="px-2 pb-2 text-xs leading-5 text-destructive" role="alert">{logoutError}</p>}
         <DropdownMenuItem variant="destructive" className="min-h-10 rounded-lg px-2" disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? <Loader2 className="animate-spin" /> : <LogOut />} Sair</DropdownMenuItem>

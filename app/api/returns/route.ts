@@ -78,7 +78,7 @@ async function cleanupExpiredQuotaReservations(db: D1Database, files: R2Bucket, 
 
 export async function GET(request: Request) {
   try {
-    const auth = await authenticateApi(request, { csrf: false });
+    const auth = await authenticateApi(request, { permission: 'returns.view', csrf: false });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { db } = getBindings();
@@ -149,7 +149,7 @@ export async function POST(request: Request) {
   let returnId: string | null = null;
   let databaseCommitted = false;
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN', 'OPERATOR'] });
+    const auth = await authenticateApi(request, { permission: 'returns.create' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { db, files } = getBindings();
@@ -388,6 +388,20 @@ export async function POST(request: Request) {
               AND reservation.organization_id = ?2
               AND reservation.return_id = ?1
               AND reservation.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          ) AND EXISTS (
+            SELECT 1 FROM organization_memberships membership
+            WHERE membership.organization_id = ?2
+              AND membership.user_id = ?17
+              AND membership.status = 'ACTIVE'
+              AND (
+                membership.role = 'ADMIN'
+                OR EXISTS (
+                  SELECT 1 FROM organization_membership_permissions permission
+                  WHERE permission.organization_id = membership.organization_id
+                    AND permission.user_id = membership.user_id
+                    AND permission.permission = 'returns.create'
+                )
+              )
           )`,
         )
         .bind(
@@ -407,6 +421,7 @@ export async function POST(request: Request) {
           actor,
           now,
           activeReservationId,
+          auth.user.id,
         ),
       db
         .prepare(

@@ -16,6 +16,7 @@ import { UserManagementSection } from '@/components/user-management-section';
 import { UserMenu } from '@/components/user-menu';
 import { apiFetch } from '@/lib/api-client';
 import type { AuthUser } from '@/lib/auth';
+import { getFirstAllowedRoute, hasUserPermission } from '@/lib/permissions';
 import type { ConfigOption, ConfigOptionsResponse, RetentionOverview, StatusDefinition } from '@/lib/returns';
 import { statusDotStyle, statusHex } from '@/lib/status-colors';
 
@@ -26,7 +27,12 @@ type EditTarget = { kind: 'STATUS' | 'OPTION'; code: string; label: string; colo
 type RetentionDraft = Pick<RetentionOverview, 'automaticEnabled' | 'photoRetentionDays' | 'returnRetentionDays'>;
 
 export function SettingsPage({ currentUser }: { currentUser: AuthUser }) {
-  const [activeSection, setActiveSection] = useState<SettingsSection>('status');
+  const canManageSettings = hasUserPermission(currentUser, 'settings.manage');
+  const canManageRetention = hasUserPermission(currentUser, 'retention.manage');
+  const canManageUsers = hasUserPermission(currentUser, 'team.manage');
+  const canCreateReturns = hasUserPermission(currentUser, 'returns.create');
+  const defaultSection: SettingsSection = canManageSettings ? 'status' : canManageRetention ? 'retencao' : 'usuarios';
+  const [activeSection, setActiveSection] = useState<SettingsSection>(defaultSection);
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [options, setOptions] = useState<ConfigOptionsResponse>(emptyOptions);
   const [retention, setRetention] = useState<RetentionOverview | null>(null);
@@ -49,25 +55,29 @@ export function SettingsPage({ currentUser }: { currentUser: AuthUser }) {
   const loadAll = useCallback(async () => {
     setError('');
     try {
-      const [statusResponse, optionResponse, retentionResponse] = await Promise.all([
-        apiFetch('/api/config/statuses?includeInactive=true'),
-        apiFetch('/api/config/options?includeInactive=true'),
-        apiFetch('/api/config/retention'),
-      ]);
-      const statusResult = (await statusResponse.json()) as { items?: StatusDefinition[]; error?: string };
-      const optionResult = (await optionResponse.json()) as ConfigOptionsResponse & { error?: string };
-      const retentionResult = (await retentionResponse.json()) as { item?: RetentionOverview; error?: string };
-      if (!statusResponse.ok) throw new Error(statusResult.error || 'Não foi possível carregar os status.');
-      if (!optionResponse.ok) throw new Error(optionResult.error || 'Não foi possível carregar os cadastros.');
-      if (!retentionResponse.ok || !retentionResult.item) throw new Error(retentionResult.error || 'Não foi possível carregar a retenção.');
-      setStatuses(statusResult.items || []);
-      setOptions(optionResult);
-      setRetention(retentionResult.item);
-      setRetentionDraft({ automaticEnabled: retentionResult.item.automaticEnabled, photoRetentionDays: retentionResult.item.photoRetentionDays, returnRetentionDays: retentionResult.item.returnRetentionDays });
+      if (canManageSettings) {
+        const [statusResponse, optionResponse] = await Promise.all([
+          apiFetch('/api/config/statuses?includeInactive=true'),
+          apiFetch('/api/config/options?includeInactive=true'),
+        ]);
+        const statusResult = (await statusResponse.json()) as { items?: StatusDefinition[]; error?: string };
+        const optionResult = (await optionResponse.json()) as ConfigOptionsResponse & { error?: string };
+        if (!statusResponse.ok) throw new Error(statusResult.error || 'Não foi possível carregar os status.');
+        if (!optionResponse.ok) throw new Error(optionResult.error || 'Não foi possível carregar os cadastros.');
+        setStatuses(statusResult.items || []);
+        setOptions(optionResult);
+      }
+      if (canManageRetention) {
+        const retentionResponse = await apiFetch('/api/config/retention');
+        const retentionResult = (await retentionResponse.json()) as { item?: RetentionOverview; error?: string };
+        if (!retentionResponse.ok || !retentionResult.item) throw new Error(retentionResult.error || 'Não foi possível carregar a retenção.');
+        setRetention(retentionResult.item);
+        setRetentionDraft({ automaticEnabled: retentionResult.item.automaticEnabled, photoRetentionDays: retentionResult.item.photoRetentionDays, returnRetentionDays: retentionResult.item.returnRetentionDays });
+      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar as configurações.');
     } finally { setLoading(false); }
-  }, []);
+  }, [canManageRetention, canManageSettings]);
 
   useEffect(() => { const timer = window.setTimeout(() => void loadAll(), 0); return () => window.clearTimeout(timer); }, [loadAll]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(''), 4500); return () => window.clearTimeout(timer); }, [notice]);
@@ -193,18 +203,18 @@ export function SettingsPage({ currentUser }: { currentUser: AuthUser }) {
     <div className="app-shell min-h-screen text-foreground">
       <header className="sticky top-0 z-30 border-b border-border/75 bg-background/88 shadow-[0_1px_0_rgb(255_255_255/45%)] backdrop-blur-xl">
         <div className="mx-auto flex h-16 min-w-0 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-6">
-          <button type="button" onClick={() => window.location.assign('/')} className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none transition hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às devoluções"><ArrowLeft className="size-5" /></button>
+          <button type="button" onClick={() => window.location.assign(getFirstAllowedRoute(currentUser))} className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none transition hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar ao sistema"><ArrowLeft className="size-5" /></button>
           <div className="hidden size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary to-emerald-700 text-primary-foreground shadow-[0_8px_20px_rgb(13_96_83/20%)] sm:grid"><PackageCheck className="size-5" /></div>
           <div className="min-w-0 flex-1"><p className="truncate text-base font-semibold">Configurações</p><p className="truncate text-xs text-muted-foreground">Cadastros, arquivos e acessos</p></div>
-          <Button className="hidden h-10 shrink-0 rounded-xl lg:inline-flex" onClick={() => window.location.assign('/receber')}><Plus /> Nova devolução</Button>
+          {canCreateReturns && <Button className="hidden h-10 shrink-0 rounded-xl lg:inline-flex" onClick={() => window.location.assign('/receber')}><Plus /> Nova devolução</Button>}
           <div className="shrink-0"><UserMenu user={currentUser} /></div>
         </div>
       </header>
 
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:py-9">
         <div><p className="text-sm font-semibold text-primary">Administração</p><h1 className="display-title mt-1 text-2xl sm:text-3xl">Configurações do sistema</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Edite os cadastros e controle quanto tempo fotos, vídeos e devoluções finalizadas permanecem armazenados.</p></div>
-        <div className="mt-6 lg:hidden"><Label htmlFor="settings-section" className="mb-2 block">Área de configuração</Label><NativeSelect id="settings-section" className="h-11 w-full bg-card" value={activeSection} onChange={(event) => setActiveSection(event.target.value as SettingsSection)}><NativeSelectOption value="status">Status e cores</NativeSelectOption><NativeSelectOption value="locais">Locais</NativeSelectOption><NativeSelectOption value="lojas">Lojas e cores</NativeSelectOption><NativeSelectOption value="condicoes">Condições</NativeSelectOption><NativeSelectOption value="retencao">Arquivos e retenção</NativeSelectOption><NativeSelectOption value="usuarios">Usuários e acessos</NativeSelectOption></NativeSelect></div>
-        <nav aria-label="Seções de configurações" className="mt-6 hidden grid-cols-3 gap-2 rounded-2xl border bg-card/90 p-2 shadow-[var(--shadow-card)] lg:grid xl:grid-cols-6"><TopNav active={activeSection === 'status'} onClick={() => setActiveSection('status')} icon={<Tags />} label="Status e cores" /><TopNav active={activeSection === 'locais'} onClick={() => setActiveSection('locais')} icon={<MapPin />} label="Locais" /><TopNav active={activeSection === 'lojas'} onClick={() => setActiveSection('lojas')} icon={<Store />} label="Lojas e cores" /><TopNav active={activeSection === 'condicoes'} onClick={() => setActiveSection('condicoes')} icon={<CheckCircle2 />} label="Condições" /><TopNav active={activeSection === 'retencao'} onClick={() => setActiveSection('retencao')} icon={<HardDrive />} label="Arquivos e retenção" /><TopNav active={activeSection === 'usuarios'} onClick={() => setActiveSection('usuarios')} icon={<UsersRound />} label="Usuários e acessos" /></nav>
+        <div className="mt-6 lg:hidden"><Label htmlFor="settings-section" className="mb-2 block">Área de configuração</Label><NativeSelect id="settings-section" className="h-11 w-full bg-card" value={activeSection} onChange={(event) => setActiveSection(event.target.value as SettingsSection)}>{canManageSettings && <><NativeSelectOption value="status">Status e cores</NativeSelectOption><NativeSelectOption value="locais">Locais</NativeSelectOption><NativeSelectOption value="lojas">Lojas e cores</NativeSelectOption><NativeSelectOption value="condicoes">Condições</NativeSelectOption></>}{canManageRetention && <NativeSelectOption value="retencao">Arquivos e retenção</NativeSelectOption>}{canManageUsers && <NativeSelectOption value="usuarios">Usuários e acessos</NativeSelectOption>}</NativeSelect></div>
+        <nav aria-label="Seções de configurações" className="mt-6 hidden grid-cols-2 gap-2 rounded-2xl border bg-card/90 p-2 shadow-[var(--shadow-card)] lg:grid lg:grid-cols-3 xl:grid-cols-6">{canManageSettings && <><TopNav active={activeSection === 'status'} onClick={() => setActiveSection('status')} icon={<Tags />} label="Status e cores" /><TopNav active={activeSection === 'locais'} onClick={() => setActiveSection('locais')} icon={<MapPin />} label="Locais" /><TopNav active={activeSection === 'lojas'} onClick={() => setActiveSection('lojas')} icon={<Store />} label="Lojas e cores" /><TopNav active={activeSection === 'condicoes'} onClick={() => setActiveSection('condicoes')} icon={<CheckCircle2 />} label="Condições" /></>}{canManageRetention && <TopNav active={activeSection === 'retencao'} onClick={() => setActiveSection('retencao')} icon={<HardDrive />} label="Arquivos e retenção" />}{canManageUsers && <TopNav active={activeSection === 'usuarios'} onClick={() => setActiveSection('usuarios')} icon={<UsersRound />} label="Usuários e acessos" />}</nav>
 
         <main className="mt-6 min-w-0">
           {loading ? <Card className="grid min-h-48 place-items-center border-0 bg-card ring-border/80"><Loader2 className="size-6 animate-spin text-primary" /></Card> : <>

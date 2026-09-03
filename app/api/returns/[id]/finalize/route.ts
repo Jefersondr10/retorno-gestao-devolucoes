@@ -12,7 +12,7 @@ function nextMutationTimestamp(previous: string) {
 
 export async function POST(request: Request, context: RouteContext) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN', 'OPERATOR'] });
+    const auth = await authenticateApi(request, { permission: 'returns.finalize' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;

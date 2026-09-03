@@ -9,6 +9,6 @@ export const metadata: Metadata = {
 };
 
 export default async function ReceivePage() {
-  const user = await requirePageUser({ roles: ['ADMIN', 'OPERATOR'] });
+  const user = await requirePageUser({ permission: 'returns.create' });
   return <MobileReceiptPage currentUser={user} />;
 }

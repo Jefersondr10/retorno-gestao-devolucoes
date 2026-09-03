@@ -1,6 +1,14 @@
 import { env } from 'cloudflare:workers';
 
 import { ensureSchema, getBindings, LEGACY_ORGANIZATION_ID, organizationSeedOperations } from '@/lib/data';
+import {
+  effectiveUserPermissions,
+  hasAnyUserPermission,
+  hasUserPermission,
+  parseStoredPermissions,
+  USER_PERMISSIONS,
+  type UserPermission,
+} from '@/lib/permissions';
 
 export type UserRole = 'ADMIN' | 'OPERATOR';
 export type UserApprovalStatus = 'APPROVED' | 'PENDING' | 'REJECTED';
@@ -13,6 +21,7 @@ export type AuthUser = {
   displayName: string;
   email: string | null;
   role: UserRole;
+  permissions: UserPermission[];
   active: boolean;
   approvalStatus: UserApprovalStatus;
   passwordLoginEnabled: boolean;
@@ -43,6 +52,7 @@ export type UserRecord = {
   password_login_enabled: number;
   approval_status: UserApprovalStatus;
   role: UserRole;
+  permissions_json?: string | null;
   active: number;
   must_change_password: number;
   failed_attempts: number;
@@ -225,7 +235,11 @@ export async function verifyPassword(password: string, record: Pick<UserRecord, 
   }
 }
 
-export function authUserFromRecord(record: Pick<UserRecord, 'id' | 'organization_id' | 'organization_name' | 'username' | 'display_name' | 'email' | 'role' | 'active' | 'approval_status' | 'password_login_enabled' | 'google_email' | 'must_change_password' | 'last_login_at'>): AuthUser {
+export function authUserFromRecord(record: Pick<UserRecord, 'id' | 'organization_id' | 'organization_name' | 'username' | 'display_name' | 'email' | 'role' | 'permissions_json' | 'active' | 'approval_status' | 'password_login_enabled' | 'google_email' | 'must_change_password' | 'last_login_at'>): AuthUser {
+  const permissions = effectiveUserPermissions({
+    role: record.role,
+    permissions: parseStoredPermissions(record.permissions_json),
+  });
   return {
     id: record.id,
     organizationId: record.organization_id,
@@ -234,6 +248,7 @@ export function authUserFromRecord(record: Pick<UserRecord, 'id' | 'organization
     displayName: record.display_name,
     email: record.email,
     role: record.role,
+    permissions,
     active: Boolean(record.active),
     approvalStatus: record.approval_status,
     passwordLoginEnabled: Boolean(record.password_login_enabled),
@@ -280,7 +295,11 @@ export async function getSessionContextFromCookie(cookieHeader: string | null): 
     .prepare(
       `SELECT s.token_hash, s.csrf_hash, s.expires_at,
         u.id, s.organization_id, o.name AS organization_name,
-        u.username, u.display_name, u.email, m.role, u.active,
+        u.username, u.display_name, u.email, m.role,
+        COALESCE((SELECT json_group_array(p.permission)
+          FROM organization_membership_permissions p
+          WHERE p.organization_id = m.organization_id AND p.user_id = m.user_id), '[]') AS permissions_json,
+        u.active,
         'APPROVED' AS approval_status, u.password_login_enabled, u.google_email,
         u.must_change_password, u.last_login_at
        FROM auth_sessions s
@@ -305,6 +324,7 @@ export async function getSessionContextFromCookie(cookieHeader: string | null): 
       display_name: String(record.display_name),
       email: typeof record.email === 'string' ? record.email : null,
       role: record.role as UserRole,
+      permissions_json: typeof record.permissions_json === 'string' ? record.permissions_json : '[]',
       active: Number(record.active),
       approval_status: record.approval_status as UserApprovalStatus,
       password_login_enabled: Number(record.password_login_enabled),
@@ -407,7 +427,7 @@ async function verifyCsrf(request: Request, session: SessionContext) {
 
 export async function authenticateApi(
   request: Request,
-  options: { roles?: UserRole[]; allowPasswordChange?: boolean; csrf?: boolean } = {},
+  options: { roles?: UserRole[]; permission?: UserPermission; anyPermissions?: readonly UserPermission[]; allowPasswordChange?: boolean; csrf?: boolean } = {},
 ): Promise<{ user: AuthUser; session: SessionContext } | { response: Response }> {
   const session = await getSessionContextFromCookie(request.headers.get('cookie'));
   if (!session) return { response: jsonError('Sua sessão terminou. Entre novamente.', 401, 'UNAUTHENTICATED') };
@@ -416,6 +436,12 @@ export async function authenticateApi(
   }
   if (options.roles && !options.roles.includes(session.user.role)) {
     return { response: jsonError('Seu perfil não tem permissão para esta ação.', 403, 'FORBIDDEN') };
+  }
+  if (options.permission && !hasUserPermission(session.user, options.permission)) {
+    return { response: jsonError('Seu acesso não permite realizar esta ação.', 403, 'FORBIDDEN') };
+  }
+  if (options.anyPermissions && !hasAnyUserPermission(session.user, options.anyPermissions)) {
+    return { response: jsonError('Seu acesso não permite abrir esta área.', 403, 'FORBIDDEN') };
   }
   const unsafeMethod = !['GET', 'HEAD', 'OPTIONS'].includes(request.method.toUpperCase());
   if ((options.csrf ?? unsafeMethod) && !(await verifyCsrf(request, session))) {
@@ -639,7 +665,11 @@ export async function login(request: Request, usernameInput: string, password: s
     .prepare(`SELECT u.id, m.organization_id, o.name AS organization_name,
       u.username, u.display_name, u.email, u.google_sub, u.google_email,
       u.password_hash, u.password_salt, u.password_iterations, u.password_login_enabled,
-      'APPROVED' AS approval_status, m.role, u.active, u.must_change_password,
+      'APPROVED' AS approval_status, m.role,
+      COALESCE((SELECT json_group_array(p.permission)
+        FROM organization_membership_permissions p
+        WHERE p.organization_id = m.organization_id AND p.user_id = m.user_id), '[]') AS permissions_json,
+      u.active, u.must_change_password,
       u.failed_attempts, u.locked_until, u.last_login_at
       FROM users u
       INNER JOIN organization_memberships m ON m.user_id = u.id AND m.status = 'ACTIVE'
@@ -784,6 +814,7 @@ export async function registerWithPassword(request: Request, input: {
     displayName,
     email: null,
     role: 'ADMIN',
+    permissions: [...USER_PERMISSIONS],
     active: true,
     approvalStatus: 'APPROVED',
     passwordLoginEnabled: true,

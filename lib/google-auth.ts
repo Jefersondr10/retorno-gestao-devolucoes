@@ -12,6 +12,7 @@ import {
   type UserRecord,
 } from '@/lib/auth';
 import { ensureSchema, getBindings, organizationSeedOperations } from '@/lib/data';
+import { USER_PERMISSIONS } from '@/lib/permissions';
 
 type GoogleAuthEnvironment = {
   GOOGLE_CLIENT_ID?: string;
@@ -208,7 +209,11 @@ async function activeAccountByGoogleSub(sub: string) {
     .prepare(`SELECT u.id, m.organization_id, o.name AS organization_name,
       u.username, u.display_name, u.email, u.google_sub, u.google_email,
       u.password_hash, u.password_salt, u.password_iterations, u.password_login_enabled,
-      'APPROVED' AS approval_status, m.role, u.active, u.must_change_password,
+      'APPROVED' AS approval_status, m.role,
+      COALESCE((SELECT json_group_array(p.permission)
+        FROM organization_membership_permissions p
+        WHERE p.organization_id = m.organization_id AND p.user_id = m.user_id), '[]') AS permissions_json,
+      u.active, u.must_change_password,
       u.failed_attempts, u.locked_until, u.last_login_at
       FROM users u
       INNER JOIN organization_memberships m ON m.user_id = u.id AND m.status = 'ACTIVE'
@@ -391,6 +396,7 @@ export async function completeGoogleOnboarding(request: Request, organizationNam
     displayName: identity.displayName,
     email: identity.email,
     role: 'ADMIN',
+    permissions: [...USER_PERMISSIONS],
     active: true,
     approvalStatus: 'APPROVED',
     passwordLoginEnabled: false,

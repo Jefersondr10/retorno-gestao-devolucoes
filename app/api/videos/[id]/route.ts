@@ -54,7 +54,7 @@ function parseRange(value: string | null, size: number) {
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const auth = await authenticateApi(request, { csrf: false });
+    const auth = await authenticateApi(request, { permission: 'returns.view', csrf: false });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;

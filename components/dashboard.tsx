@@ -38,10 +38,15 @@ import { ReturnWorkspace } from '@/components/return-workspace';
 import { UserMenu } from '@/components/user-menu';
 import { apiFetch } from '@/lib/api-client';
 import type { AuthUser } from '@/lib/auth';
+import { hasAnyUserPermission, hasUserPermission, SETTINGS_PERMISSIONS } from '@/lib/permissions';
 import type { ConfigOption, ConfigOptionsResponse, ReturnSummary, StatusDefinition } from '@/lib/returns';
 import { statusClass, statusDotStyle, statusStyle } from '@/lib/status-colors';
 
 export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
+  const canCreateReturns = hasUserPermission(currentUser, 'returns.create');
+  const canDeleteReturns = hasUserPermission(currentUser, 'returns.delete');
+  const canOpenSettings = hasAnyUserPermission(currentUser, SETTINGS_PERMISSIONS);
+  const mobileNavColumns = canCreateReturns && canOpenSettings ? 'grid-cols-5' : canCreateReturns || canOpenSettings ? 'grid-cols-4' : 'grid-cols-3';
   const [items, setItems] = useState<ReturnSummary[]>([]);
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -140,6 +145,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
   }
 
   async function deleteReturn(item: ReturnSummary) {
+    if (!canDeleteReturns) return;
     const confirmation = window.prompt(`Para excluir definitivamente ${item.protocol}, digite o protocolo abaixo:`);
     if (confirmation !== item.protocol) return;
     setDeletingId(item.id);
@@ -171,7 +177,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <Button size="lg" className="h-11 rounded-xl px-4 shadow-[0_8px_20px_rgb(13_96_83/18%)]" onClick={() => { window.location.href = '/receber'; }}><Camera /><span className="hidden sm:inline">Registrar recebimento</span><span className="sm:hidden">Registrar</span></Button>
+            {canCreateReturns && <Button size="lg" className="h-11 rounded-xl px-4 shadow-[0_8px_20px_rgb(13_96_83/18%)]" onClick={() => { window.location.href = '/receber'; }}><Camera /><span className="hidden sm:inline">Registrar recebimento</span><span className="sm:hidden">Registrar</span></Button>}
             <UserMenu user={currentUser} />
           </div>
         </div>
@@ -179,7 +185,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
           <HeaderNav active={viewMode === 'pending'} icon={<LayoutDashboard />} label="Pendências" onClick={() => changeView('pending')} />
           <HeaderNav active={viewMode === 'finalized'} icon={<Archive />} label="Finalizadas" onClick={() => changeView('finalized')} />
           <HeaderNav icon={<Store />} label="Filtrar por loja" onClick={() => document.querySelector<HTMLButtonElement>('button[aria-label^="Filtrar por loja"]')?.focus()} />
-          {currentUser.role === 'ADMIN' && <HeaderNav icon={<Settings />} label="Configurações" onClick={() => { window.location.href = '/configuracoes'; }} />}
+          {canOpenSettings && <HeaderNav icon={<Settings />} label="Configurações" onClick={() => { window.location.href = '/configuracoes'; }} />}
           <p className="ml-auto text-xs text-muted-foreground">{viewMode === 'finalized' ? 'Histórico concluído e limpeza de armazenamento' : 'Fila operacional em andamento'}</p>
         </nav>
       </header>
@@ -251,24 +257,24 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
               ) : loading ? (
                 <div className="grid min-h-56 place-items-center text-muted-foreground"><div className="text-center"><Loader2 className="mx-auto size-6 animate-spin" /><p className="mt-2 text-sm">Atualizando a fila...</p></div></div>
               ) : visibleItems.length === 0 ? (
-                <EmptyState finalized={viewMode === 'finalized'} hasFilters={Boolean(search || statusFilters.length > 0 || storeFilters.length > 0)} onCreate={() => { window.location.href = '/receber'; }} onClear={() => { setSearch(''); setStatusFilters([]); setStoreFilters([]); }} />
+                <EmptyState finalized={viewMode === 'finalized'} hasFilters={Boolean(search || statusFilters.length > 0 || storeFilters.length > 0)} canCreate={canCreateReturns} onCreate={() => { window.location.href = '/receber'; }} onClear={() => { setSearch(''); setStatusFilters([]); setStoreFilters([]); }} />
               ) : (
                 <div className={listLayout === 'grid' ? 'grid gap-3 xl:grid-cols-3' : 'space-y-2'}>
                   {visibleItems.map((item) => listLayout === 'grid'
-                    ? <ReturnCard key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && currentUser.role === 'ADMIN' ? () => void deleteReturn(item) : undefined} />
-                    : <ReturnListRow key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && currentUser.role === 'ADMIN' ? () => void deleteReturn(item) : undefined} />)}
+                    ? <ReturnCard key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />
+                    : <ReturnListRow key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />)}
                 </div>
               )}
             </section>
           </div>
       </main>
 
-      <nav aria-label="Navegação móvel" className={`fixed inset-x-3 bottom-3 z-40 grid ${currentUser.role === 'ADMIN' ? 'grid-cols-5' : 'grid-cols-4'} rounded-2xl border border-border/80 bg-card/95 px-1 py-2 shadow-[var(--shadow-floating)] backdrop-blur-xl lg:hidden`}>
+      <nav aria-label="Navegação móvel" className={`fixed inset-x-3 bottom-3 z-40 grid ${mobileNavColumns} rounded-2xl border border-border/80 bg-card/95 px-1 py-2 shadow-[var(--shadow-floating)] backdrop-blur-xl lg:hidden`}>
         <MobileNav icon={<LayoutDashboard />} label="Pendentes" active={viewMode === 'pending'} onClick={() => changeView('pending')} />
         <MobileNav icon={<Archive />} label="Finalizadas" active={viewMode === 'finalized'} onClick={() => changeView('finalized')} />
-        <MobileNav icon={<Camera />} label="Nova" onClick={() => { window.location.href = '/receber'; }} />
+        {canCreateReturns && <MobileNav icon={<Camera />} label="Nova" onClick={() => { window.location.href = '/receber'; }} />}
         <MobileNav icon={<Search />} label="Buscar" onClick={() => document.querySelector<HTMLInputElement>('input[aria-label="Buscar devolução"]')?.focus()} />
-        {currentUser.role === 'ADMIN' && <MobileNav icon={<Settings />} label="Ajustes" onClick={() => { window.location.href = '/configuracoes'; }} />}
+        {canOpenSettings && <MobileNav icon={<Settings />} label="Ajustes" onClick={() => { window.location.href = '/configuracoes'; }} />}
       </nav>
 
       <Dialog open={Boolean(detailId)} onOpenChange={(open) => {
@@ -397,8 +403,8 @@ function MobileNav({ icon, label, active = false, onClick }: { icon: React.React
   return <button type="button" className={`flex min-h-12 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold [&>svg]:size-[19px] ${active ? 'bg-primary/9 text-primary' : 'text-muted-foreground'}`} onClick={onClick}>{icon}{label}</button>;
 }
 
-function EmptyState({ finalized, hasFilters, onCreate, onClear }: { finalized: boolean; hasFilters: boolean; onCreate: () => void; onClear: () => void }) {
-  return <div className="rounded-3xl border border-dashed bg-card/60 px-6 py-14 text-center"><div className="mx-auto grid size-14 place-items-center rounded-2xl bg-primary/10 text-primary">{finalized ? <Archive className="size-7" /> : <Inbox className="size-7" />}</div><h3 className="mt-4 text-lg font-bold">{hasFilters ? 'Nenhuma devolução encontrada' : finalized ? 'Nenhuma devolução finalizada' : 'A fila está vazia'}</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{hasFilters ? 'Tente remover os filtros ou buscar por outro termo.' : finalized ? 'Quando uma devolução for concluída, ela aparecerá aqui.' : 'Registre o primeiro recebimento por foto ou preencha o cadastro completo.'}</p><div className="mt-5 flex justify-center gap-2">{hasFilters && <Button variant="outline" className="h-11" onClick={onClear}>Limpar filtros</Button>}{!finalized && <Button className="h-11" onClick={onCreate}><Camera /> Registrar recebimento</Button>}</div></div>;
+function EmptyState({ finalized, hasFilters, canCreate, onCreate, onClear }: { finalized: boolean; hasFilters: boolean; canCreate: boolean; onCreate: () => void; onClear: () => void }) {
+  return <div className="rounded-3xl border border-dashed bg-card/60 px-6 py-14 text-center"><div className="mx-auto grid size-14 place-items-center rounded-2xl bg-primary/10 text-primary">{finalized ? <Archive className="size-7" /> : <Inbox className="size-7" />}</div><h3 className="mt-4 text-lg font-bold">{hasFilters ? 'Nenhuma devolução encontrada' : finalized ? 'Nenhuma devolução finalizada' : 'A fila está vazia'}</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{hasFilters ? 'Tente remover os filtros ou buscar por outro termo.' : finalized ? 'Quando uma devolução for concluída, ela aparecerá aqui.' : canCreate ? 'Registre o primeiro recebimento por foto ou preencha o cadastro completo.' : 'Nenhuma devolução está aguardando ação neste momento.'}</p><div className="mt-5 flex justify-center gap-2">{hasFilters && <Button variant="outline" className="h-11" onClick={onClear}>Limpar filtros</Button>}{!finalized && canCreate && <Button className="h-11" onClick={onCreate}><Camera /> Registrar recebimento</Button>}</div></div>;
 }
 
 function relativeDate(value: string) {

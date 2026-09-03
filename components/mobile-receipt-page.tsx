@@ -30,6 +30,7 @@ import { apiFetch } from '@/lib/api-client';
 import type { AuthUser } from '@/lib/auth';
 import { MAX_PHOTO_BYTES, normalizeImageFile } from '@/lib/client-images';
 import { formatVideoDuration, formatVideoSize, prepareVideoFile, type PreparedVideo } from '@/lib/client-video';
+import { hasUserPermission } from '@/lib/permissions';
 import type { ConfigOptionsResponse, ReturnDetail } from '@/lib/returns';
 
 type ReceiptFields = {
@@ -63,6 +64,7 @@ function defaultFields(): ReceiptFields {
 }
 
 export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
+  const canViewReturns = hasUserPermission(currentUser, 'returns.view');
   const cameraInput = useRef<HTMLInputElement>(null);
   const galleryInput = useRef<HTMLInputElement>(null);
   const videoCameraInput = useRef<HTMLInputElement>(null);
@@ -270,10 +272,10 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
             </Alert>
           )}
 
-          <div className="mt-7 grid gap-3 sm:grid-cols-2">
-            <Button variant="outline" className="h-12 rounded-xl" onClick={() => { window.location.href = '/'; }}>
+          <div className={`mt-7 grid gap-3 ${canViewReturns ? 'sm:grid-cols-2' : ''}`}>
+            {canViewReturns && <Button variant="outline" className="h-12 rounded-xl" onClick={() => { window.location.href = '/'; }}>
               Voltar às pendências
-            </Button>
+            </Button>}
             <Button className="h-12 rounded-xl" onClick={reset}>
               <Camera /> Registrar outra
             </Button>
@@ -287,9 +289,9 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
     <div className="app-shell min-h-[100dvh] text-foreground">
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-3xl items-center gap-3 px-4 sm:px-6">
-          <Link href="/" className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às pendências">
+          {canViewReturns && <Link href="/" className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às pendências">
             <ArrowLeft className="size-5" />
-          </Link>
+          </Link>}
           <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
             <PackageCheck className="size-5" />
           </div>

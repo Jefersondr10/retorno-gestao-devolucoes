@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN'], csrf: false });
+    const auth = await authenticateApi(request, { permission: 'retention.manage', csrf: false });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     return Response.json({ item: await getRetentionOverview(auth.user.organizationId) });
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    const auth = await authenticateApi(request, { permission: 'retention.manage' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const body = (await request.json()) as {
@@ -57,7 +57,7 @@ export async function PATCH(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    const auth = await authenticateApi(request, { permission: 'retention.manage' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const result = await runRetentionCleanup({ organizationId: auth.user.organizationId, force: true, actor: actorLabel(auth.user) });

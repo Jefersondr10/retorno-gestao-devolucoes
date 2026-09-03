@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const returnSequences = sqliteTable('return_sequences', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -131,6 +131,28 @@ export const organizationMemberships = sqliteTable(
     uniqueIndex('idx_memberships_one_active_org').on(table.userId).where(sql`${table.status} = 'ACTIVE'`),
     check('membership_role_check', sql`${table.role} IN ('ADMIN', 'OPERATOR')`),
     check('membership_status_check', sql`${table.status} IN ('ACTIVE', 'PENDING', 'REJECTED', 'SUSPENDED')`),
+  ],
+);
+
+export const organizationMembershipPermissions = sqliteTable(
+  'organization_membership_permissions',
+  {
+    organizationId: text('organization_id').notNull(),
+    userId: text('user_id').notNull(),
+    permission: text('permission').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.userId, table.permission] }),
+    foreignKey({
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [organizationMemberships.organizationId, organizationMemberships.userId],
+      name: 'membership_permissions_membership_fk',
+    }).onDelete('cascade'),
+    check(
+      'membership_permission_value_check',
+      sql`${table.permission} IN ('returns.view', 'returns.create', 'returns.edit', 'returns.finalize', 'returns.delete', 'settings.manage', 'retention.manage', 'team.manage')`,
+    ),
   ],
 );
 

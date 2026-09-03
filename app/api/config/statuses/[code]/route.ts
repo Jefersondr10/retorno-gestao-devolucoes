@@ -15,7 +15,7 @@ function validColor(value: string | undefined) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    const auth = await authenticateApi(request, { permission: 'settings.manage' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { code } = await context.params;
@@ -49,7 +49,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 export async function DELETE(request: Request, context: RouteContext) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    const auth = await authenticateApi(request, { permission: 'settings.manage' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { code } = await context.params;

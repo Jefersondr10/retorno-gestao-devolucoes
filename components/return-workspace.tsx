@@ -40,6 +40,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { UserMenu } from '@/components/user-menu';
 import { apiFetch } from '@/lib/api-client';
 import type { AuthUser } from '@/lib/auth';
+import { hasUserPermission } from '@/lib/permissions';
 import {
   destinationOptions,
   getWorkflowIssues,
@@ -93,6 +94,9 @@ function mapDetail(item: ReturnDetail): UpdateInput {
 }
 
 export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClose }: { returnId: string; currentUser: AuthUser; embedded?: boolean; onClose?: () => void }) {
+  const canEdit = hasUserPermission(currentUser, 'returns.edit');
+  const canFinalize = hasUserPermission(currentUser, 'returns.finalize');
+  const canDelete = hasUserPermission(currentUser, 'returns.delete');
   const [detail, setDetail] = useState<ReturnDetail | null>(null);
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [options, setOptions] = useState<ConfigOptionsResponse>({ locations: [], stores: [], conditions: [] });
@@ -205,6 +209,7 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
   }, [notice]);
 
   async function save(data: UpdateOutput) {
+    if (!canEdit) return;
     setServerError('');
     const parsedDate = new Date(data.receivedAt);
     const payload = {
@@ -229,7 +234,7 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
   }
 
   async function finalize() {
-    if (!detail || blockingReasons.length > 0 || form.formState.isDirty) return;
+    if (!canFinalize || !detail || blockingReasons.length > 0 || form.formState.isDirty) return;
     if (!window.confirm(`Finalizar ${detail.protocol}? Depois disso, o registro ficará bloqueado para edição.`)) return;
     setFinalizing(true);
     setServerError('');
@@ -286,7 +291,7 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
             <div className="flex flex-wrap items-center gap-2"><h1 className="text-lg font-semibold tracking-tight tabular-nums">{detail.protocol}</h1><Badge variant="outline" className={statusClass(selectedStatus?.color || detail.status_color)} style={statusStyle(selectedStatus?.color || detail.status_color)}><span className="size-2 rounded-full" style={statusDotStyle(selectedStatus?.color || detail.status_color)} />{selectedStatus?.label || detail.status_label}</Badge>{detail.source === 'PHOTO' && <Badge variant="secondary"><Camera /> {detail.video_count > 0 && detail.photo_count === 0 ? 'Aberta por vídeo' : detail.video_count > 0 ? 'Aberta por mídia' : 'Aberta por foto'}</Badge>}</div>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail.store || 'Loja pendente'} · recebida em {formatDate(detail.received_at)}</p>
           </div>
-          {!finalized && <div className="hidden items-center gap-2 md:flex"><span className="mr-2 text-xs text-muted-foreground">{form.formState.isDirty ? 'Alterações não salvas' : 'Tudo salvo'}</span><Button type="submit" variant="outline" className="h-10" disabled={form.formState.isSubmitting || finalizing}>{form.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <Save />} Salvar</Button><Button type="button" className="h-10" disabled={blockingReasons.length > 0 || form.formState.isDirty || finalizing} onClick={finalize}>{finalizing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Finalizar</Button></div>}
+          {!finalized && (canEdit || canFinalize) && <div className="hidden items-center gap-2 md:flex"><span className="mr-2 text-xs text-muted-foreground">{form.formState.isDirty ? 'Alterações não salvas' : 'Tudo salvo'}</span>{canEdit && <Button type="submit" variant="outline" className="h-10" disabled={form.formState.isSubmitting || finalizing}>{form.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <Save />} Salvar</Button>}{canFinalize && <Button type="button" className="h-10" disabled={blockingReasons.length > 0 || form.formState.isDirty || finalizing} onClick={finalize}>{finalizing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Finalizar</Button>}</div>}
           {!embedded && <UserMenu user={currentUser} />}
         </div>
         <nav className="mx-auto grid max-w-7xl grid-cols-2 gap-2 border-t px-4 py-2 text-xs font-semibold text-muted-foreground sm:grid-cols-3 sm:px-6 lg:grid-cols-5" aria-label="Progresso das etapas da devolução">
@@ -300,11 +305,12 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
 
       <main className={cn('mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)] lg:items-start lg:py-8', embedded && 'min-h-0 flex-1 overflow-y-auto')}>
         <aside className={cn('min-w-0 lg:sticky', embedded ? 'lg:top-3' : 'lg:top-32')}>
-          {detail.photos.length || detail.videos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80"><ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} videos={detail.videos} returnId={detail.id} finalized={finalized} canDeleteVideos={currentUser.role === 'ADMIN'} onVideosDeleted={refreshAfterVideoDeletion} /></Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto ou vídeo recebido</p></div></Card>}
+          {detail.photos.length || detail.videos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80"><ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} videos={detail.videos} returnId={detail.id} finalized={finalized} canDeleteVideos={canDelete} onVideosDeleted={refreshAfterVideoDeletion} /></Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto ou vídeo recebido</p></div></Card>}
         </aside>
 
         <div className="min-w-0 space-y-5">
-          <fieldset disabled={finalized} className="space-y-5">
+          {!finalized && !canEdit && <Alert className="border-sky-200 bg-sky-50 text-sky-900"><CircleDashed /><AlertTitle>Modo de consulta</AlertTitle><AlertDescription>Você pode visualizar esta devolução, mas não possui acesso para editar os dados.</AlertDescription></Alert>}
+          <fieldset disabled={finalized || !canEdit} className="space-y-5">
             <SectionCard id="recebimento" step="1" icon={<MapPin />} title="Recebimento" description="Onde, de qual loja e quando a devolução chegou." state={stepStates.receipt} issueCount={issueCountByStep.receipt}>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Local de recebimento" error={form.formState.errors.receivedLocation?.message}>
@@ -375,9 +381,9 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
 
           {finalized && <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900"><CheckCircle2 /><AlertTitle>Devolução finalizada</AlertTitle><AlertDescription>Finalizada por {detail.finalized_by} em {formatDate(detail.finalized_at)}. O registro está protegido contra edições.</AlertDescription></Alert>}
 
-          {!finalized && (
+          {!finalized && (canEdit || canFinalize) && (
             <Card className="border-0 bg-card p-4 shadow-[0_12px_38px_rgb(28_39_36/7%)] ring-border/80 sm:p-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted-foreground">{form.formState.isDirty ? 'Há alterações ainda não salvas.' : blockingReasons.length ? 'Salve os dados e conclua as pendências indicadas.' : 'Tudo pronto para finalizar.'}</p><div className="flex flex-col gap-2 sm:flex-row"><Button type="submit" variant="outline" className="h-11" disabled={form.formState.isSubmitting || finalizing}>{form.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <Save />} Salvar alterações</Button><Button type="button" className="h-11" disabled={blockingReasons.length > 0 || form.formState.isDirty || finalizing} onClick={finalize}>{finalizing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Finalizar devolução</Button></div></div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted-foreground">{form.formState.isDirty ? 'Há alterações ainda não salvas.' : blockingReasons.length ? `${canEdit ? 'Salve os dados e ' : ''}conclua as pendências indicadas.` : canFinalize ? 'Tudo pronto para finalizar.' : 'Dados atualizados.'}</p><div className="flex flex-col gap-2 sm:flex-row">{canEdit && <Button type="submit" variant="outline" className="h-11" disabled={form.formState.isSubmitting || finalizing}>{form.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <Save />} Salvar alterações</Button>}{canFinalize && <Button type="button" className="h-11" disabled={blockingReasons.length > 0 || form.formState.isDirty || finalizing} onClick={finalize}>{finalizing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Finalizar devolução</Button>}</div></div>
             </Card>
           )}
 

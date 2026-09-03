@@ -14,7 +14,7 @@ function nextMutationTimestamp(previous: string) {
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const auth = await authenticateApi(request, { csrf: false });
+    const auth = await authenticateApi(request, { permission: 'returns.view', csrf: false });
     if ('response' in auth) return auth.response;
     const { id } = await context.params;
     const item = await getReturnDetail(id, auth.user.organizationId);
@@ -28,7 +28,7 @@ export async function GET(request: Request, context: RouteContext) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN', 'OPERATOR'] });
+    const auth = await authenticateApi(request, { permission: 'returns.edit' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;
@@ -189,7 +189,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 export async function DELETE(request: Request, context: RouteContext) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    const auth = await authenticateApi(request, { permission: 'returns.delete' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;

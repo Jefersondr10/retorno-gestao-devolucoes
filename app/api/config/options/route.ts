@@ -8,7 +8,7 @@ type OptionType = (typeof allowedTypes)[number];
 
 export async function GET(request: Request) {
   try {
-    const auth = await authenticateApi(request, { csrf: false });
+    const auth = await authenticateApi(request, { anyPermissions: ['returns.view', 'returns.create', 'settings.manage'], csrf: false });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { db } = getBindings();
@@ -42,7 +42,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    const auth = await authenticateApi(request, { permission: 'settings.manage' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const body = (await request.json()) as {

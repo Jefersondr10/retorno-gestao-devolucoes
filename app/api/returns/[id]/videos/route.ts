@@ -7,7 +7,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function DELETE(request: Request, context: RouteContext) {
   try {
-    const auth = await authenticateApi(request, { roles: ['ADMIN'] });
+    const auth = await authenticateApi(request, { permission: 'returns.delete' });
     if ('response' in auth) return auth.response;
     await ensureSchema();
     const { id } = await context.params;

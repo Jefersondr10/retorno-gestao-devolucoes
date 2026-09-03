@@ -76,6 +76,19 @@ const statements = [
     CHECK (role IN ('ADMIN', 'OPERATOR')),
     CHECK (status IN ('ACTIVE', 'PENDING', 'REJECTED', 'SUSPENDED'))
   )`,
+  `CREATE TABLE IF NOT EXISTS organization_membership_permissions (
+    organization_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    permission TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (organization_id, user_id, permission),
+    FOREIGN KEY (organization_id, user_id)
+      REFERENCES organization_memberships(organization_id, user_id) ON DELETE CASCADE,
+    CHECK (permission IN (
+      'returns.view', 'returns.create', 'returns.edit', 'returns.finalize',
+      'returns.delete', 'settings.manage', 'retention.manage', 'team.manage'
+    ))
+  )`,
   `CREATE TRIGGER IF NOT EXISTS memberships_keep_one_admin_on_update
     BEFORE UPDATE OF role, status, organization_id ON organization_memberships
     WHEN OLD.role = 'ADMIN' AND OLD.status = 'ACTIVE'
@@ -327,6 +340,21 @@ export async function ensureSchema() {
         db
           .prepare('INSERT OR IGNORE INTO organizations (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
           .bind(LEGACY_ORGANIZATION_ID, 'Núcleo de Operação', now, now),
+        db.prepare(`INSERT OR IGNORE INTO organization_membership_permissions
+          (organization_id, user_id, permission, created_at)
+          SELECT m.organization_id, m.user_id, defaults.permission, m.updated_at
+          FROM organization_memberships m
+          CROSS JOIN (
+            SELECT 'returns.view' AS permission
+            UNION ALL SELECT 'returns.create'
+            UNION ALL SELECT 'returns.edit'
+            UNION ALL SELECT 'returns.finalize'
+          ) defaults
+          WHERE m.role = 'OPERATOR'
+            AND NOT EXISTS (
+              SELECT 1 FROM organization_membership_permissions existing
+              WHERE existing.organization_id = m.organization_id AND existing.user_id = m.user_id
+            )`),
         ...organizationSeedOperations(db, LEGACY_ORGANIZATION_ID, now),
       ]);
       await db.prepare('PRAGMA optimize').run();
