@@ -194,7 +194,10 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
         if (cancelled) return;
         setDetail(loadedDetail);
         setStatuses(loadedStatuses);
-        setOptions(loadedOptions);
+        setOptions({
+          ...loadedOptions,
+          conditions: mergeConditionDefinitions(loadedOptions.conditions, loadedDetail.condition_definitions),
+        });
         form.reset(mapDetail(loadedDetail));
       })
       .catch((error) => !cancelled && setServerError(error instanceof Error ? error.message : 'Não foi possível abrir a devolução.'))
@@ -226,6 +229,10 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
       const result = (await response.json()) as { item?: ReturnDetail; error?: string };
       if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível salvar.');
       setDetail(result.item);
+      setOptions((current) => ({
+        ...current,
+        conditions: result.item?.condition_definitions || [],
+      }));
       form.reset(mapDetail(result.item));
       setNotice('Alterações salvas com sucesso.');
     } catch (error) {
@@ -348,7 +355,7 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
                           <Field label="SKU"><Input className="h-11" {...form.register(`items.${index}.sku`)} /></Field>
                           <Field label="Quantidade" error={form.formState.errors.items?.[index]?.quantity?.message}><Input className="h-11" type="number" min={1} inputMode="numeric" {...form.register(`items.${index}.quantity`, { valueAsNumber: true })} /></Field>
                           <Field label="Condição do produto">
-                            <NativeSelect className="w-full" {...form.register(`items.${index}.condition`)}><NativeSelectOption value="">Selecione</NativeSelectOption>{options.conditions.map((condition) => <NativeSelectOption key={condition.code} value={condition.code}>{condition.label}{condition.requires_invoice ? '' : ' · sem nota'}</NativeSelectOption>)}</NativeSelect>
+                            <NativeSelect className="w-full" {...form.register(`items.${index}.condition`)}><NativeSelectOption value="">Selecione</NativeSelectOption>{options.conditions.filter((condition) => Boolean(condition.active) || condition.code === conditionCode).map((condition) => <NativeSelectOption key={condition.code} value={condition.code}>{condition.label}{condition.active ? '' : ' · inativa'}{condition.requires_invoice ? '' : ' · sem nota'}</NativeSelectOption>)}</NativeSelect>
                           </Field>
                           <Field label="Destino / ação">
                             <NativeSelect className="w-full" {...form.register(`items.${index}.destination`, { onChange: (event) => { if (event.target.value === 'TEST') form.setValue('status', 'WAITING_TEST', { shouldDirty: true }); } })}><NativeSelectOption value="">Selecione</NativeSelectOption>{destinationOptions.map((option) => <NativeSelectOption key={option.value} value={option.value}>{option.label}</NativeSelectOption>)}</NativeSelect>
@@ -373,7 +380,7 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
                 <Field label="Data da entrada"><Input className="h-11" type="date" {...form.register('invoiceDate')} /></Field>
               </div>
 
-              {blockingReasons.length > 0 && (
+              {!finalized && blockingReasons.length > 0 && (
                 <Alert className="mt-5 border-amber-200 bg-amber-50 text-amber-900"><AlertCircle /><AlertTitle>Falta concluir {blockingReasons.length === 1 ? '1 item' : `${blockingReasons.length} itens`}</AlertTitle><AlertDescription><ul className="mt-1 list-disc space-y-1 pl-4">{blockingReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></AlertDescription></Alert>
               )}
             </SectionCard>
@@ -500,6 +507,12 @@ function pendingCountLabel(count: number) {
 function mergeCurrentOption(options: ConfigOption[], current: string | null) {
   if (!current || options.some((option) => option.label === current)) return options;
   return [...options, { code: `CURRENT_${current}`, type: 'STORE', label: current, color: '#64748b', is_system: 0, sort_order: 999, active: 1, requires_invoice: 1, requires_notes: 0 } as ConfigOption];
+}
+
+function mergeConditionDefinitions(configured: ConfigOption[], fromReturn: ConfigOption[]) {
+  const merged = new Map(configured.map((condition) => [condition.code, condition]));
+  for (const condition of fromReturn) merged.set(condition.code, condition);
+  return [...merged.values()].sort((left, right) => Number(right.active) - Number(left.active) || left.sort_order - right.sort_order || left.label.localeCompare(right.label, 'pt-BR'));
 }
 
 function formatDate(value: string | null) {

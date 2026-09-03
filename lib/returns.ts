@@ -171,6 +171,7 @@ export type ReturnDetail = ReturnSummary & {
     details: string | null;
     created_at: string;
   }>;
+  condition_definitions: ConfigOption[];
   canFinalize: boolean;
   blockingReasons: string[];
 };

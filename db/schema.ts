@@ -182,6 +182,20 @@ export const organizationQuotaReservations = sqliteTable(
   ],
 );
 
+export const userReleaseAcknowledgements = sqliteTable(
+  'user_release_acknowledgements',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    releaseId: text('release_id').notNull(),
+    acknowledgedAt: text('acknowledged_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.releaseId] }),
+  ],
+);
+
 export const authSessions = sqliteTable(
   'auth_sessions',
   {

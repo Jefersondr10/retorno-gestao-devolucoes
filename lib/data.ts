@@ -89,6 +89,12 @@ const statements = [
       'returns.delete', 'settings.manage', 'retention.manage', 'team.manage'
     ))
   )`,
+  `CREATE TABLE IF NOT EXISTS user_release_acknowledgements (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    release_id TEXT NOT NULL,
+    acknowledged_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, release_id)
+  )`,
   `CREATE TRIGGER IF NOT EXISTS memberships_keep_one_admin_on_update
     BEFORE UPDATE OF role, status, organization_id ON organization_memberships
     WHEN OLD.role = 'ADMIN' AND OLD.status = 'ACTIVE'
@@ -387,7 +393,7 @@ export async function getReturnDetail(id: string, organizationId: string): Promi
 
   if (!record) return null;
 
-  const [itemsResult, photosResult, videosResult, historyResult, invoiceExemptConditionsResult] = await Promise.all([
+  const [itemsResult, photosResult, videosResult, historyResult, conditionDefinitionsResult] = await Promise.all([
     db.prepare('SELECT * FROM return_items WHERE return_id = ? ORDER BY rowid').bind(id).all(),
     db
       .prepare('SELECT id, file_name, content_type, size, created_at FROM return_photos WHERE return_id = ? ORDER BY created_at')
@@ -402,9 +408,28 @@ export async function getReturnDetail(id: string, organizationId: string): Promi
       .bind(id, organizationId)
       .all(),
     db
-      .prepare("SELECT code, requires_invoice, requires_notes FROM tenant_config_options WHERE organization_id = ? AND type = 'CONDITION'")
-      .bind(organizationId)
-      .all<{ code: string; requires_invoice: number; requires_notes: number }>(),
+      .prepare(
+        `SELECT o.code, o.type, o.label, o.color, o.is_system, o.sort_order, o.active,
+          o.requires_invoice, o.requires_notes
+         FROM tenant_config_options o
+         WHERE o.organization_id = ? AND o.type = 'CONDITION'
+           AND (o.active = 1 OR EXISTS (
+             SELECT 1 FROM return_items i WHERE i.return_id = ? AND i.condition = o.code
+           ))
+         ORDER BY o.active DESC, o.sort_order, o.label`,
+      )
+      .bind(organizationId, id)
+      .all<{
+        code: string;
+        type: 'CONDITION';
+        label: string;
+        color: string;
+        is_system: number;
+        sort_order: number;
+        active: number;
+        requires_invoice: number;
+        requires_notes: number;
+      }>(),
   ]);
 
   const detail = {
@@ -415,14 +440,15 @@ export async function getReturnDetail(id: string, organizationId: string): Promi
     photos: photosResult.results,
     videos: videosResult.results,
     history: historyResult.results,
+    condition_definitions: conditionDefinitionsResult.results,
   } as unknown as ReturnDetail;
 
   detail.blockingReasons = getBlockingReasons(
     detail,
-    invoiceExemptConditionsResult.results.filter((condition) => condition.requires_invoice === 0).map((condition) => condition.code),
-    invoiceExemptConditionsResult.results.filter((condition) => condition.requires_notes === 1).map((condition) => condition.code),
+    conditionDefinitionsResult.results.filter((condition) => condition.requires_invoice === 0).map((condition) => condition.code),
+    conditionDefinitionsResult.results.filter((condition) => condition.requires_notes === 1).map((condition) => condition.code),
   );
-  const validConditionCodes = new Set(invoiceExemptConditionsResult.results.map((condition) => condition.code));
+  const validConditionCodes = new Set(conditionDefinitionsResult.results.map((condition) => condition.code));
   for (const product of detail.items) {
     if (product.condition && !validConditionCodes.has(product.condition)) {
       detail.blockingReasons.push(`${product.product}: selecione uma condição válida.`);

@@ -33,7 +33,13 @@ export async function PATCH(request: Request, context: RouteContext) {
     const { db } = getBindings();
     const current = await db.prepare('SELECT * FROM tenant_config_options WHERE organization_id = ? AND code = ?').bind(auth.user.organizationId, code).first<OptionRecord>();
     if (!current) return apiError('Cadastro não encontrado.', 404);
-    const body = (await request.json()) as { label?: string; color?: string; active?: boolean };
+    const body = (await request.json()) as {
+      label?: string;
+      color?: string;
+      active?: boolean;
+      requiresInvoice?: boolean;
+      requiresNotes?: boolean;
+    };
     const label = body.label?.trim() || current.label;
     const color = body.color === undefined
       ? current.color
@@ -41,6 +47,18 @@ export async function PATCH(request: Request, context: RouteContext) {
         ? body.color.trim().toLowerCase()
         : '';
     const active = body.active === undefined ? current.active : body.active ? 1 : 0;
+    if (body.requiresInvoice !== undefined && typeof body.requiresInvoice !== 'boolean') {
+      return apiError('A exigência de nota de entrada não é válida.', 422);
+    }
+    if (body.requiresNotes !== undefined && typeof body.requiresNotes !== 'boolean') {
+      return apiError('A exigência de descrição não é válida.', 422);
+    }
+    const requiresInvoice = current.type === 'CONDITION' && body.requiresInvoice !== undefined
+      ? (body.requiresInvoice ? 1 : 0)
+      : current.requires_invoice;
+    const requiresNotes = current.type === 'CONDITION' && body.requiresNotes !== undefined
+      ? (body.requiresNotes ? 1 : 0)
+      : current.requires_notes;
     if (!label || label.length > 120) return apiError('Informe um nome com até 120 caracteres.', 422);
     if (!color) return apiError('Selecione uma cor válida.', 422);
     const duplicate = await db
@@ -50,7 +68,13 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (duplicate) return apiError('Já existe um cadastro com este nome.', 409);
 
     const operations: D1PreparedStatement[] = [
-      db.prepare('UPDATE tenant_config_options SET label = ?, color = ?, active = ? WHERE organization_id = ? AND code = ?').bind(label, color, active, auth.user.organizationId, code),
+      db
+        .prepare(
+          `UPDATE tenant_config_options
+           SET label = ?, color = ?, active = ?, requires_invoice = ?, requires_notes = ?
+           WHERE organization_id = ? AND code = ?`,
+        )
+        .bind(label, color, active, requiresInvoice, requiresNotes, auth.user.organizationId, code),
     ];
     if (label !== current.label && current.type === 'STORE') operations.push(db.prepare('UPDATE returns SET store = ? WHERE organization_id = ? AND store = ?').bind(label, auth.user.organizationId, current.label));
     if (label !== current.label && current.type === 'LOCATION') operations.push(db.prepare('UPDATE returns SET received_location = ? WHERE organization_id = ? AND received_location = ?').bind(label, auth.user.organizationId, current.label));
@@ -58,10 +82,21 @@ export async function PATCH(request: Request, context: RouteContext) {
     operations.push(
       db
         .prepare("INSERT INTO audit_events (id, organization_id, return_id, actor, action, details, created_at) VALUES (?, ?, NULL, ?, 'CONFIG_OPTION_UPDATED', ?, ?)")
-        .bind(crypto.randomUUID(), auth.user.organizationId, actorLabel(auth.user), JSON.stringify({ code, previous: current, next: { label, color, active } }), now),
+        .bind(
+          crypto.randomUUID(),
+          auth.user.organizationId,
+          actorLabel(auth.user),
+          JSON.stringify({
+            code,
+            previous: current,
+            next: { label, color, active, requires_invoice: requiresInvoice, requires_notes: requiresNotes },
+          }),
+          now,
+        ),
     );
     await db.batch(operations);
-    return Response.json({ item: { ...current, label, color, active, usage_count: await usageCount({ ...current, label, color, active }, auth.user.organizationId) } });
+    const updated = { ...current, label, color, active, requires_invoice: requiresInvoice, requires_notes: requiresNotes };
+    return Response.json({ item: { ...updated, usage_count: await usageCount(updated, auth.user.organizationId) } });
   } catch (error) {
     console.error(error);
     return apiError('Não foi possível atualizar o cadastro.', 500);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { KeyRound, Loader2, LogOut, ShieldCheck } from 'lucide-react';
+import { Download, KeyRound, Loader2, LogOut, ShieldCheck, Sparkles } from 'lucide-react';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -16,10 +16,13 @@ import {
 import { apiFetch } from '@/lib/api-client';
 import type { AuthUser } from '@/lib/auth';
 import { hasAnyUserPermission, SETTINGS_PERMISSIONS } from '@/lib/permissions';
+import { usePwaInstall } from '@/components/pwa-provider';
+import { RELEASE_NOTES_EVENT } from '@/components/release-notice';
 
 export function UserMenu({ user }: { user: AuthUser }) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState('');
+  const { isInstalled, requestInstall } = usePwaInstall();
   const initials = user.displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'U';
   const canOpenAdministration = hasAnyUserPermission(user, SETTINGS_PERMISSIONS);
 
@@ -50,6 +53,8 @@ export function UserMenu({ user }: { user: AuthUser }) {
         <DropdownMenuLabel className="px-2 py-2"><span className="block truncate text-sm font-semibold text-foreground">{user.displayName}</span><span className="mt-0.5 block truncate font-normal text-muted-foreground">{user.organizationName}</span><span className="mt-1 block truncate font-normal text-muted-foreground">@{user.username} · {user.role === 'ADMIN' ? 'Administrador' : `${user.permissions.length} acessos`}</span></DropdownMenuLabel>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
+        {!isInstalled && <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => void requestInstall()}><Download /> Instalar aplicativo</DropdownMenuItem>}
+        <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => window.dispatchEvent(new Event(RELEASE_NOTES_EVENT))}><Sparkles /> Ver novidades</DropdownMenuItem>
         {user.passwordLoginEnabled && <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => window.location.assign('/alterar-senha')}><KeyRound /> Trocar minha senha</DropdownMenuItem>}
         {canOpenAdministration && <DropdownMenuItem className="min-h-10 rounded-lg px-2" onClick={() => window.location.assign('/configuracoes')}><ShieldCheck /> Administração</DropdownMenuItem>}
         <DropdownMenuSeparator />

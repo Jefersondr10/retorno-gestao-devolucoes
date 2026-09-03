@@ -1,5 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+
+import { PwaProvider } from '@/components/pwa-provider';
+import { ReleaseNotice } from '@/components/release-notice';
 import './globals.css';
 
 const geistSans = Geist({
@@ -16,6 +19,20 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://devolucoes.nucleodeoperacao.com.br'),
   title: 'Retorno — Gestão de devoluções',
   description: 'Receba, classifique e finalize devoluções com segurança.',
+  applicationName: 'Retorno',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/icons/icon-192.png', type: 'image/png', sizes: '192x192' },
+    ],
+    apple: [{ url: '/icons/apple-touch-icon.png', type: 'image/png', sizes: '180x180' }],
+  },
+  appleWebApp: {
+    capable: true,
+    title: 'Retorno',
+    statusBarStyle: 'default',
+  },
   openGraph: {
     title: 'Retorno — Gestão de devoluções',
     description: 'Receba, classifique e finalize devoluções com segurança.',
@@ -40,7 +57,12 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="pt-BR">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <PwaProvider>
+          {children}
+          <ReleaseNotice />
+        </PwaProvider>
+      </body>
     </html>
   );
 }
