@@ -55,6 +55,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
   const [configuredStores, setConfiguredStores] = useState<ConfigOption[]>([]);
   const [viewMode, setViewMode] = useState<'pending' | 'finalized'>('pending');
   const [listLayout, setListLayout] = useState<'grid' | 'list'>('grid');
+  const [groupByStore, setGroupByStore] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState('');
   const [notice, setNotice] = useState('');
@@ -97,8 +98,10 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
   }, [loadReturns, search, viewMode]);
   useEffect(() => {
     const savedLayout = window.localStorage.getItem('returns-list-layout');
+    const savedGrouping = window.localStorage.getItem('returns-group-by-store');
     const timer = window.setTimeout(() => {
       if (savedLayout === 'grid' || savedLayout === 'list') setListLayout(savedLayout);
+      if (savedGrouping === 'true') setGroupByStore(true);
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -116,6 +119,22 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
     }
     return [...storesByLabel.values()].sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
   }, [configuredStores, items]);
+  const groupedItems = useMemo(() => {
+    const groups = new Map<string, { label: string; color: string; items: ReturnSummary[] }>();
+    for (const item of visibleItems) {
+      const label = item.store || 'Loja não informada';
+      const configuredStore = storeOptions.find((store) => store.label === item.store);
+      const color = configuredStore?.color || item.store_color || '#64748b';
+      const group = groups.get(label);
+      if (group) group.items.push(item);
+      else groups.set(label, { label, color, items: [item] });
+    }
+    return [...groups.values()].sort((a, b) => {
+      if (a.label === 'Loja não informada') return 1;
+      if (b.label === 'Loja não informada') return -1;
+      return a.label.localeCompare(b.label, 'pt-BR');
+    });
+  }, [storeOptions, visibleItems]);
   const metrics = useMemo(() => ({
     pending: items.filter((item) => item.status === 'PENDING_INFO').length,
     testing: items.filter((item) => item.status === 'WAITING_TEST').length,
@@ -132,6 +151,13 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
   function changeListLayout(nextLayout: 'grid' | 'list') {
     setListLayout(nextLayout);
     window.localStorage.setItem('returns-list-layout', nextLayout);
+  }
+
+  function toggleStoreGrouping() {
+    setGroupByStore((current) => {
+      window.localStorage.setItem('returns-group-by-store', String(!current));
+      return !current;
+    });
   }
 
   function toggleStatusFilter(code: string) {
@@ -182,7 +208,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
         <nav aria-label="Navegação principal" className="mx-auto hidden max-w-7xl items-center gap-2 border-t border-border/60 px-4 py-2 sm:px-6 lg:flex">
           <HeaderNav active={viewMode === 'pending'} icon={<LayoutDashboard />} label="Pendências" onClick={() => changeView('pending')} />
           <HeaderNav active={viewMode === 'finalized'} icon={<Archive />} label="Finalizadas" onClick={() => changeView('finalized')} />
-          <HeaderNav icon={<Store />} label="Filtrar por loja" onClick={() => document.getElementById('store-filter-trigger')?.click()} />
+          <HeaderNav active={groupByStore} icon={<Store />} label={groupByStore ? 'Separado por loja' : 'Separar por loja'} onClick={toggleStoreGrouping} />
           <p className="ml-auto text-xs text-muted-foreground">{viewMode === 'finalized' ? 'Histórico concluído e limpeza de armazenamento' : 'Fila operacional em andamento'}</p>
         </nav>
       </header>
@@ -247,7 +273,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
             )}
 
             <section className="mt-7">
-              <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-base font-semibold tracking-tight">{viewMode === 'finalized' ? 'Histórico finalizado' : search ? 'Resultados da busca' : statusFilters.length > 0 || storeFilters.length > 0 ? 'Resultados filtrados' : 'Prioridade agora'}</h2><p className="text-xs text-muted-foreground">{visibleItems.length} {visibleItems.length === 1 ? 'devolução encontrada' : 'devoluções encontradas'}</p></div><div className="flex flex-wrap items-center gap-2"><fieldset className="inline-flex rounded-xl border bg-card p-1 shadow-xs"><legend className="sr-only">Formato de exibição</legend><button type="button" className={`flex h-11 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition ${listLayout === 'grid' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`} aria-pressed={listLayout === 'grid'} onClick={() => changeListLayout('grid')}><Grid2X2 className="size-3.5" /> Grade</button><button type="button" className={`flex h-11 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition ${listLayout === 'list' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`} aria-pressed={listLayout === 'list'} onClick={() => changeListLayout('list')}><List className="size-3.5" /> Lista</button></fieldset>{(statusFilters.length > 0 || storeFilters.length > 0 || search) && <Button variant="ghost" className="h-11 text-primary" onClick={() => { setStatusFilters([]); setStoreFilters([]); setSearch(''); }}>Limpar filtros <X /></Button>}</div></div>
+              <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-base font-semibold tracking-tight">{groupByStore ? 'Devoluções separadas por loja' : viewMode === 'finalized' ? 'Histórico finalizado' : search ? 'Resultados da busca' : statusFilters.length > 0 || storeFilters.length > 0 ? 'Resultados filtrados' : 'Prioridade agora'}</h2><p className="text-xs text-muted-foreground">{visibleItems.length} {visibleItems.length === 1 ? 'devolução encontrada' : 'devoluções encontradas'}{groupByStore ? ` em ${groupedItems.length} ${groupedItems.length === 1 ? 'loja' : 'lojas'}` : ''}</p></div><div className="flex flex-wrap items-center gap-2"><Button type="button" variant={groupByStore ? 'default' : 'outline'} className="h-11 lg:hidden" aria-pressed={groupByStore} onClick={toggleStoreGrouping}><Store /> {groupByStore ? 'Separado por loja' : 'Separar por loja'}</Button><fieldset className="inline-flex rounded-xl border bg-card p-1 shadow-xs"><legend className="sr-only">Formato de exibição</legend><button type="button" className={`flex h-11 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition ${listLayout === 'grid' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`} aria-pressed={listLayout === 'grid'} onClick={() => changeListLayout('grid')}><Grid2X2 className="size-3.5" /> Grade</button><button type="button" className={`flex h-11 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition ${listLayout === 'list' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`} aria-pressed={listLayout === 'list'} onClick={() => changeListLayout('list')}><List className="size-3.5" /> Lista</button></fieldset>{(statusFilters.length > 0 || storeFilters.length > 0 || search) && <Button variant="ghost" className="h-11 text-primary" onClick={() => { setStatusFilters([]); setStoreFilters([]); setSearch(''); }}>Limpar filtros <X /></Button>}</div></div>
 
               {error ? (
                 <Alert variant="destructive"><X /><AlertTitle>Não foi possível carregar</AlertTitle><AlertDescription>{error} <button className="font-semibold underline" onClick={() => loadReturns()}>Tentar novamente</button></AlertDescription></Alert>
@@ -258,11 +284,24 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
               ) : (
                 <div className="relative">
                   {loading && <div className="pointer-events-none absolute right-2 top-2 z-10 inline-flex items-center gap-2 rounded-full border bg-card/95 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm"><Loader2 className="size-3.5 animate-spin" /> Atualizando resultados</div>}
-                  <div className={listLayout === 'grid' ? 'grid gap-3 xl:grid-cols-3' : 'space-y-2'}>
-                  {visibleItems.map((item) => listLayout === 'grid'
-                    ? <ReturnCard key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />
-                    : <ReturnListRow key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />)}
-                  </div>
+                  {groupByStore ? <div className="space-y-5">
+                    {groupedItems.map((group) => <section key={group.label} className="overflow-hidden rounded-3xl border bg-card/40 shadow-xs" style={{ borderColor: `${group.color}55` }}>
+                      <div className="flex items-center gap-3 border-b px-4 py-3 sm:px-5" style={{ borderColor: `${group.color}35`, backgroundColor: `${group.color}12` }}>
+                        <span className="size-3 shrink-0 rounded-full shadow-sm" style={{ backgroundColor: group.color }} />
+                        <h3 className="min-w-0 flex-1 truncate text-sm font-bold sm:text-base">{group.label}</h3>
+                        <Badge variant="secondary" className="bg-card/80">{group.items.length} {group.items.length === 1 ? 'devolução' : 'devoluções'}</Badge>
+                      </div>
+                      <div className={listLayout === 'grid' ? 'grid gap-3 p-3 sm:p-4 xl:grid-cols-3' : 'space-y-2 p-3 sm:p-4'}>
+                        {group.items.map((item) => listLayout === 'grid'
+                          ? <ReturnCard key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />
+                          : <ReturnListRow key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />)}
+                      </div>
+                    </section>)}
+                  </div> : <div className={listLayout === 'grid' ? 'grid gap-3 xl:grid-cols-3' : 'space-y-2'}>
+                    {visibleItems.map((item) => listLayout === 'grid'
+                      ? <ReturnCard key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />
+                      : <ReturnListRow key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />)}
+                  </div>}
                 </div>
               )}
             </section>

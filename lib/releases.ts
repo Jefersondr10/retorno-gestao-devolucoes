@@ -18,6 +18,18 @@ export type SystemRelease = {
  */
 export const SYSTEM_RELEASES: readonly SystemRelease[] = [
   {
+    id: '2026-09-03-agrupamento-por-loja',
+    version: '17',
+    title: 'Devoluções separadas por loja',
+    publishedAt: '2026-09-03',
+    summary: 'A fila agora pode ser organizada automaticamente em blocos visuais para cada loja.',
+    changes: [
+      { title: 'Separação visual', description: 'Ative Separar por loja no menu superior para criar um bloco por loja, com a cor cadastrada e a quantidade de devoluções.' },
+      { title: 'Filtros combinados', description: 'A seleção de uma ou várias lojas continua disponível e pode ser combinada com a separação visual.' },
+      { title: 'Preferência lembrada', description: 'O sistema mantém o agrupamento escolhido quando você voltar à fila.' },
+    ],
+  },
+  {
     id: '2026-09-03-cancelamento-e-tela-ampla',
     version: '16',
     title: 'Cancelamento seguro e gestão em tela ampla',
