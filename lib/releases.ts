@@ -18,6 +18,17 @@ export type SystemRelease = {
  */
 export const SYSTEM_RELEASES: readonly SystemRelease[] = [
   {
+    id: '2026-09-03-cancelamento-e-tela-ampla',
+    version: '16',
+    title: 'Cancelamento seguro e gestão em tela ampla',
+    publishedAt: '2026-09-03',
+    summary: 'O registro pode ser cancelado com segurança e a gestão voltou a aproveitar toda a tela do computador.',
+    changes: [
+      { title: 'Cancelar novo registro', description: 'Use Cancelar no topo ou no rodapé. Se já houver dados ou mídias, o sistema pede confirmação antes de descartar.' },
+      { title: 'Gestão em largura total', description: 'A tela de gerenciamento agora ocupa toda a área disponível, mantendo fotos e formulários bem distribuídos no desktop.' },
+    ],
+  },
+  {
     id: '2026-09-03-produtos-tiny',
     version: '15',
     title: 'Produtos integrados ao Tiny',

@@ -15,6 +15,7 @@ import {
   Trash2,
   Upload,
   Video,
+  X,
 } from 'lucide-react';
 
 import { ContinuousCamera } from '@/components/continuous-camera';
@@ -87,6 +88,13 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
   } | null>(null);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerOpen, setViewerOpen] = useState(false);
+
+  function cancelRegistration() {
+    const initial = defaultFields();
+    const hasDraft = photos.length > 0 || Boolean(video) || fields.store !== initial.store || fields.orderId !== initial.orderId || fields.trackingCode !== initial.trackingCode || fields.product !== initial.product || fields.notes !== initial.notes || fields.receivedLocation !== initial.receivedLocation;
+    if (hasDraft && !window.confirm('Cancelar este registro? As fotos, o vídeo e os dados preenchidos serão descartados.')) return;
+    window.location.assign('/');
+  }
 
   const previews = useMemo(
     () => photos.map((file, index) => ({
@@ -292,7 +300,7 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
     <div className="app-shell min-h-[100dvh] text-foreground">
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-3xl items-center gap-3 px-4 sm:px-6">
-          {canViewReturns && <Link href="/" className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Voltar às pendências">
+          {canViewReturns && <Link href="/" onClick={(event) => { event.preventDefault(); cancelRegistration(); }} className="grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Cancelar e voltar às pendências">
             <ArrowLeft className="size-5" />
           </Link>}
           <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
@@ -302,7 +310,8 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
             <h1 className="truncate text-base font-bold">Nova devolução</h1>
             <p className="truncate text-xs text-muted-foreground">Recebimento rápido por foto ou vídeo</p>
           </div>
-          <div className="ml-auto"><UserMenu user={currentUser} /></div>
+          <Button type="button" variant="ghost" className="ml-auto h-10 px-3 text-muted-foreground" onClick={cancelRegistration}><X /><span className="hidden sm:inline">Cancelar</span></Button>
+          <div><UserMenu user={currentUser} /></div>
         </div>
       </header>
 
@@ -493,9 +502,12 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
 
         <footer className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t bg-card/96 px-4 pt-3 shadow-[0_-12px_35px_rgb(28_39_36/8%)] backdrop-blur-xl sm:px-6">
           <div className="mx-auto max-w-3xl">
-            <Button type="submit" className="h-13 w-full rounded-xl text-[15px] font-bold shadow-[0_10px_24px_rgb(13_96_83/20%)]" disabled={submitting || Boolean(preparingPhotos) || preparingVideo || mediaCount === 0}>
+            <div className="grid grid-cols-[auto_1fr] gap-2">
+              <Button type="button" variant="outline" className="h-13 rounded-xl px-4" disabled={submitting} onClick={cancelRegistration}><X /> <span className="hidden sm:inline">Cancelar</span></Button>
+              <Button type="submit" className="h-13 w-full rounded-xl text-[15px] font-bold shadow-[0_10px_24px_rgb(13_96_83/20%)]" disabled={submitting || Boolean(preparingPhotos) || preparingVideo || mediaCount === 0}>
               {submitting ? <><Loader2 className="animate-spin" /> Enviando {mediaCount} {mediaCount === 1 ? 'arquivo' : 'arquivos'}...</> : preparingPhotos ? <><Loader2 className="animate-spin" /> {preparingPhotos}</> : preparingVideo ? <><Loader2 className="animate-spin" /> Preparando vídeo…</> : <><CheckCircle2 /> Registrar recebimento</>}
-            </Button>
+              </Button>
+            </div>
             <p className="mt-2 text-center text-[11px] text-muted-foreground" aria-live="polite">
               {submitting ? 'Não feche esta tela enquanto os arquivos são enviados.' : 'Pedido, rastreio e produto podem ser preenchidos depois.'}
             </p>

@@ -282,7 +282,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
           void loadReturns(search, viewMode);
         }
       }}>
-        <DialogContent showCloseButton={false} className="h-dvh w-screen max-w-none gap-0 overflow-hidden rounded-none p-0">
+        <DialogContent showCloseButton={false} className="h-dvh w-screen max-w-none gap-0 overflow-hidden rounded-none p-0 sm:max-w-none">
           <DialogTitle className="sr-only">Gerenciar devolução</DialogTitle>
           {detailId && <ReturnWorkspace returnId={detailId} currentUser={currentUser} embedded onClose={() => {
             setDetailId(null);
