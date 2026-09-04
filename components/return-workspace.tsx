@@ -23,6 +23,7 @@ import { useFieldArray, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { ReturnPhotoGallery } from '@/components/return-photo-gallery';
+import { TinyProductInput } from '@/components/tiny-product-input';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -352,7 +353,7 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
                       <div key={field.fieldKey} className="rounded-2xl border bg-muted/15 p-4">
                         <div className="mb-3 flex items-center justify-between"><p className="text-sm font-bold">Produto {index + 1}</p><Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => itemFields.remove(index)} aria-label={`Remover produto ${index + 1}`}><Trash2 /></Button></div>
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                          <div className="sm:col-span-2"><Field label="Produto" error={form.formState.errors.items?.[index]?.product?.message}><Input className="h-11" placeholder="Nome ou descrição" {...form.register(`items.${index}.product`)} /></Field></div>
+                          <div className="sm:col-span-2"><Field label="Produto" hint="Busca integrada ao Tiny" error={form.formState.errors.items?.[index]?.product?.message}><TinyProductInput value={values.items?.[index]?.product || ''} onChange={(product) => form.setValue(`items.${index}.product`, product, { shouldDirty: true, shouldValidate: true })} onSelectSku={(sku) => form.setValue(`items.${index}.sku`, sku, { shouldDirty: true })} /></Field></div>
                           <Field label="SKU"><Input className="h-11" {...form.register(`items.${index}.sku`)} /></Field>
                           <Field label="Quantidade" error={form.formState.errors.items?.[index]?.quantity?.message}><Input className="h-11" type="number" min={1} inputMode="numeric" {...form.register(`items.${index}.quantity`, { valueAsNumber: true })} /></Field>
                           <Field label="Condição do produto">

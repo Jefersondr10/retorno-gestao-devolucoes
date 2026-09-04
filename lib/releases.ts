@@ -18,6 +18,18 @@ export type SystemRelease = {
  */
 export const SYSTEM_RELEASES: readonly SystemRelease[] = [
   {
+    id: '2026-09-03-produtos-tiny',
+    version: '15',
+    title: 'Produtos integrados ao Tiny',
+    publishedAt: '2026-09-03',
+    summary: 'Agora o produto pode ser localizado diretamente no catálogo do Tiny durante o recebimento ou a gestão da devolução.',
+    changes: [
+      { title: 'Pesquisa por nome ou SKU', description: 'Digite pelo menos duas letras para ver produtos ativos do Tiny e selecionar o item correto.' },
+      { title: 'SKU preenchido automaticamente', description: 'Na gestão da devolução, ao selecionar um produto do Tiny, o SKU correspondente também é preenchido.' },
+      { title: 'Preenchimento manual preservado', description: 'Se o item não estiver no Tiny ou a integração estiver indisponível, ainda é possível digitar o produto normalmente.' },
+    ],
+  },
+  {
     id: '2026-09-03-fluxo-rapido-e-tela-cheia',
     version: '14',
     title: 'Fluxo mais rápido no celular e no computador',

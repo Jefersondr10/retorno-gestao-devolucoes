@@ -19,6 +19,7 @@ import {
 
 import { ContinuousCamera } from '@/components/continuous-camera';
 import { PhotoLightbox } from '@/components/photo-lightbox';
+import { TinyProductInput } from '@/components/tiny-product-input';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -465,7 +466,7 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
                 <Input id="receipt-tracking" className="h-11 uppercase" placeholder="Ex.: AB123456789BR" value={fields.trackingCode} onChange={(event) => updateField('trackingCode', event.target.value)} />
               </Field>
               <Field label="Produto" htmlFor="receipt-product" hint="Opcional">
-                <Input id="receipt-product" className="h-11" placeholder="Nome ou SKU" value={fields.product} onChange={(event) => updateField('product', event.target.value)} />
+                <TinyProductInput value={fields.product} onChange={(product) => updateField('product', product)} placeholder="Buscar no Tiny por nome ou SKU" />
               </Field>
               <Field label="Quantidade" htmlFor="receipt-quantity" hint="Opcional">
                 <Input id="receipt-quantity" className="h-11" type="number" inputMode="numeric" min={1} value={fields.quantity} onChange={(event) => updateField('quantity', event.target.value)} />
