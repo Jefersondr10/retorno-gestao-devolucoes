@@ -18,7 +18,6 @@ import {
   Loader2,
   PackageCheck,
   Search,
-  Settings,
   Store,
   TestTube2,
   Trash2,
@@ -38,15 +37,14 @@ import { ReturnWorkspace } from '@/components/return-workspace';
 import { UserMenu } from '@/components/user-menu';
 import { apiFetch } from '@/lib/api-client';
 import type { AuthUser } from '@/lib/auth';
-import { hasAnyUserPermission, hasUserPermission, SETTINGS_PERMISSIONS } from '@/lib/permissions';
+import { hasUserPermission } from '@/lib/permissions';
 import type { ConfigOption, ConfigOptionsResponse, ReturnSummary, StatusDefinition } from '@/lib/returns';
 import { statusClass, statusDotStyle, statusStyle } from '@/lib/status-colors';
 
 export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
   const canCreateReturns = hasUserPermission(currentUser, 'returns.create');
   const canDeleteReturns = hasUserPermission(currentUser, 'returns.delete');
-  const canOpenSettings = hasAnyUserPermission(currentUser, SETTINGS_PERMISSIONS);
-  const mobileNavColumns = canCreateReturns && canOpenSettings ? 'grid-cols-5' : canCreateReturns || canOpenSettings ? 'grid-cols-4' : 'grid-cols-3';
+  const mobileNavColumns = canCreateReturns ? 'grid-cols-4' : 'grid-cols-3';
   const [items, setItems] = useState<ReturnSummary[]>([]);
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -184,8 +182,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
         <nav aria-label="Navegação principal" className="mx-auto hidden max-w-7xl items-center gap-2 border-t border-border/60 px-4 py-2 sm:px-6 lg:flex">
           <HeaderNav active={viewMode === 'pending'} icon={<LayoutDashboard />} label="Pendências" onClick={() => changeView('pending')} />
           <HeaderNav active={viewMode === 'finalized'} icon={<Archive />} label="Finalizadas" onClick={() => changeView('finalized')} />
-          <HeaderNav icon={<Store />} label="Filtrar por loja" onClick={() => document.querySelector<HTMLButtonElement>('button[aria-label^="Filtrar por loja"]')?.focus()} />
-          {canOpenSettings && <HeaderNav icon={<Settings />} label="Configurações" onClick={() => { window.location.href = '/configuracoes'; }} />}
+          <HeaderNav icon={<Store />} label="Filtrar por loja" onClick={() => document.getElementById('store-filter-trigger')?.click()} />
           <p className="ml-auto text-xs text-muted-foreground">{viewMode === 'finalized' ? 'Histórico concluído e limpeza de armazenamento' : 'Fila operacional em andamento'}</p>
         </nav>
       </header>
@@ -254,15 +251,18 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
 
               {error ? (
                 <Alert variant="destructive"><X /><AlertTitle>Não foi possível carregar</AlertTitle><AlertDescription>{error} <button className="font-semibold underline" onClick={() => loadReturns()}>Tentar novamente</button></AlertDescription></Alert>
-              ) : loading ? (
+              ) : loading && items.length === 0 ? (
                 <div className="grid min-h-56 place-items-center text-muted-foreground"><div className="text-center"><Loader2 className="mx-auto size-6 animate-spin" /><p className="mt-2 text-sm">Atualizando a fila...</p></div></div>
               ) : visibleItems.length === 0 ? (
                 <EmptyState finalized={viewMode === 'finalized'} hasFilters={Boolean(search || statusFilters.length > 0 || storeFilters.length > 0)} canCreate={canCreateReturns} onCreate={() => { window.location.href = '/receber'; }} onClear={() => { setSearch(''); setStatusFilters([]); setStoreFilters([]); }} />
               ) : (
-                <div className={listLayout === 'grid' ? 'grid gap-3 xl:grid-cols-3' : 'space-y-2'}>
+                <div className="relative">
+                  {loading && <div className="pointer-events-none absolute right-2 top-2 z-10 inline-flex items-center gap-2 rounded-full border bg-card/95 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm"><Loader2 className="size-3.5 animate-spin" /> Atualizando resultados</div>}
+                  <div className={listLayout === 'grid' ? 'grid gap-3 xl:grid-cols-3' : 'space-y-2'}>
                   {visibleItems.map((item) => listLayout === 'grid'
                     ? <ReturnCard key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />
                     : <ReturnListRow key={item.id} item={item} deleting={deletingId === item.id} onOpen={() => setDetailId(item.id)} onDelete={viewMode === 'finalized' && canDeleteReturns ? () => void deleteReturn(item) : undefined} />)}
+                  </div>
                 </div>
               )}
             </section>
@@ -274,7 +274,6 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
         <MobileNav icon={<Archive />} label="Finalizadas" active={viewMode === 'finalized'} onClick={() => changeView('finalized')} />
         {canCreateReturns && <MobileNav icon={<Camera />} label="Nova" onClick={() => { window.location.href = '/receber'; }} />}
         <MobileNav icon={<Search />} label="Buscar" onClick={() => document.querySelector<HTMLInputElement>('input[aria-label="Buscar devolução"]')?.focus()} />
-        {canOpenSettings && <MobileNav icon={<Settings />} label="Ajustes" onClick={() => { window.location.href = '/configuracoes'; }} />}
       </nav>
 
       <Dialog open={Boolean(detailId)} onOpenChange={(open) => {
@@ -283,7 +282,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
           void loadReturns(search, viewMode);
         }
       }}>
-        <DialogContent showCloseButton={false} className="h-dvh w-screen max-w-none gap-0 overflow-hidden rounded-none p-0 sm:h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:rounded-3xl">
+        <DialogContent showCloseButton={false} className="h-dvh w-screen max-w-none gap-0 overflow-hidden rounded-none p-0">
           <DialogTitle className="sr-only">Gerenciar devolução</DialogTitle>
           {detailId && <ReturnWorkspace returnId={detailId} currentUser={currentUser} embedded onClose={() => {
             setDetailId(null);
@@ -305,10 +304,10 @@ function StatusMultiSelect({ statuses, selected, onChange }: { statuses: StatusD
 }
 
 function StoreMultiSelect({ stores, selected, onChange }: { stores: ConfigOption[]; selected: string[]; onChange: (selected: string[]) => void }) {
-  return <ColorMultiSelect icon={<Store />} title="Filtrar por loja" description="Marque uma ou várias lojas." allLabel="Todas as lojas" plural="lojas selecionadas" searchable options={stores.map((store) => ({ value: store.label, label: store.label, color: store.color }))} selected={selected} onChange={onChange} />;
+  return <ColorMultiSelect triggerId="store-filter-trigger" icon={<Store />} title="Filtrar por loja" description="Marque uma ou várias lojas." allLabel="Todas as lojas" plural="lojas selecionadas" searchable options={stores.map((store) => ({ value: store.label, label: store.label, color: store.color }))} selected={selected} onChange={onChange} />;
 }
 
-function ColorMultiSelect({ icon, title, description, allLabel, plural, searchable = false, options, selected, onChange }: { icon: React.ReactNode; title: string; description: string; allLabel: string; plural: string; searchable?: boolean; options: ColorFilterOption[]; selected: string[]; onChange: (selected: string[]) => void }) {
+function ColorMultiSelect({ triggerId, icon, title, description, allLabel, plural, searchable = false, options, selected, onChange }: { triggerId?: string; icon: React.ReactNode; title: string; description: string; allLabel: string; plural: string; searchable?: boolean; options: ColorFilterOption[]; selected: string[]; onChange: (selected: string[]) => void }) {
   const [query, setQuery] = useState('');
   const selectedOptions = options.filter((option) => selected.includes(option.value));
   const visibleOptions = query.trim()
@@ -320,7 +319,7 @@ function ColorMultiSelect({ icon, title, description, allLabel, plural, searchab
     onChange(selected.includes(value) ? selected.filter((selectedValue) => selectedValue !== value) : [...selected, value]);
   }
 
-  return <div className="w-full lg:w-[22rem]"><Popover><PopoverTrigger type="button" className="flex h-11 w-full items-center justify-between gap-3 rounded-xl border border-input bg-card px-3 text-left text-sm font-medium shadow-xs outline-none transition hover:border-primary/25 hover:bg-card focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" aria-label={`${title}. ${summary}`}><span className="flex min-w-0 items-center gap-2"><span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>{selectedOptions.length > 0 && <span className="flex shrink-0 -space-x-1" aria-hidden="true">{selectedOptions.slice(0, 4).map((option) => <span key={option.value} className="size-3 rounded-full ring-2 ring-background" style={statusDotStyle(option.color)} />)}</span>}<span className="truncate">{summary}</span></span><ChevronDown className="size-4 shrink-0 text-muted-foreground" /></PopoverTrigger><PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] gap-2 p-2.5"><PopoverHeader className="flex-row items-start justify-between gap-3 px-1 pt-1"><div><PopoverTitle className="font-semibold">{title}</PopoverTitle><PopoverDescription className="mt-0.5 text-xs">{description}</PopoverDescription></div>{selected.length > 0 && <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs text-primary" onClick={() => onChange([])}>Limpar</Button>}</PopoverHeader>{searchable && options.length > 8 && <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} className="h-10 rounded-xl pl-9" placeholder="Buscar loja" aria-label="Buscar loja no filtro" /></div>}<fieldset className="max-h-72 space-y-1 overflow-y-auto pr-1"><legend className="sr-only">Opções disponíveis</legend>{visibleOptions.map((option) => { const isSelected = selected.includes(option.value); return <label key={option.value} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition ${isSelected ? 'border-primary/25 bg-primary/6' : 'border-transparent hover:bg-muted/60'}`}><Checkbox checked={isSelected} onCheckedChange={() => toggle(option.value)} /><span className="size-3 shrink-0 rounded-full ring-4 ring-background" style={statusDotStyle(option.color)} aria-hidden="true" /><span className="min-w-0 flex-1 truncate text-sm font-medium">{option.label}</span></label>; })}{visibleOptions.length === 0 && <p className="px-3 py-5 text-center text-sm text-muted-foreground">Nenhuma loja encontrada.</p>}</fieldset></PopoverContent></Popover></div>;
+  return <div className="w-full lg:w-[22rem]"><Popover><PopoverTrigger id={triggerId} type="button" className="flex h-11 w-full items-center justify-between gap-3 rounded-xl border border-input bg-card px-3 text-left text-sm font-medium shadow-xs outline-none transition hover:border-primary/25 hover:bg-card focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" aria-label={`${title}. ${summary}`}><span className="flex min-w-0 items-center gap-2"><span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>{selectedOptions.length > 0 && <span className="flex shrink-0 -space-x-1" aria-hidden="true">{selectedOptions.slice(0, 4).map((option) => <span key={option.value} className="size-3 rounded-full ring-2 ring-background" style={statusDotStyle(option.color)} />)}</span>}<span className="truncate">{summary}</span></span><ChevronDown className="size-4 shrink-0 text-muted-foreground" /></PopoverTrigger><PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] gap-2 p-2.5"><PopoverHeader className="flex-row items-start justify-between gap-3 px-1 pt-1"><div><PopoverTitle className="font-semibold">{title}</PopoverTitle><PopoverDescription className="mt-0.5 text-xs">{description}</PopoverDescription></div>{selected.length > 0 && <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs text-primary" onClick={() => onChange([])}>Limpar</Button>}</PopoverHeader>{searchable && options.length > 8 && <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} className="h-10 rounded-xl pl-9" placeholder="Buscar loja" aria-label="Buscar loja no filtro" /></div>}<fieldset className="max-h-72 space-y-1 overflow-y-auto pr-1"><legend className="sr-only">Opções disponíveis</legend>{visibleOptions.map((option) => { const isSelected = selected.includes(option.value); return <label key={option.value} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition ${isSelected ? 'border-primary/25 bg-primary/6' : 'border-transparent hover:bg-muted/60'}`}><Checkbox checked={isSelected} onCheckedChange={() => toggle(option.value)} /><span className="size-3 shrink-0 rounded-full ring-4 ring-background" style={statusDotStyle(option.color)} aria-hidden="true" /><span className="min-w-0 flex-1 truncate text-sm font-medium">{option.label}</span></label>; })}{visibleOptions.length === 0 && <p className="px-3 py-5 text-center text-sm text-muted-foreground">Nenhuma loja encontrada.</p>}</fieldset></PopoverContent></Popover></div>;
 }
 
 function ReturnCard({ item, deleting, onOpen, onDelete }: { item: ReturnSummary; deleting: boolean; onOpen: () => void; onDelete?: () => void }) {

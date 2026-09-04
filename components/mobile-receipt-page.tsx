@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { UserMenu } from '@/components/user-menu';
 import { apiFetch } from '@/lib/api-client';
@@ -32,6 +33,7 @@ import { MAX_PHOTO_BYTES, normalizeImageFile } from '@/lib/client-images';
 import { formatVideoDuration, formatVideoSize, prepareVideoFile, type PreparedVideo } from '@/lib/client-video';
 import { hasUserPermission } from '@/lib/permissions';
 import type { ConfigOptionsResponse, ReturnDetail } from '@/lib/returns';
+import { statusDotStyle } from '@/lib/status-colors';
 
 type ReceiptFields = {
   receivedLocation: string;
@@ -73,7 +75,7 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
   const [video, setVideo] = useState<PreparedVideo | null>(null);
   const [options, setOptions] = useState<ConfigOptionsResponse>({ locations: [], stores: [], conditions: [] });
   const [fields, setFields] = useState<ReceiptFields>(defaultFields);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [preparingPhotos, setPreparingPhotos] = useState('');
   const [preparingVideo, setPreparingVideo] = useState(false);
@@ -313,6 +315,25 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
             </p>
           </section>
 
+          <section className="grid gap-4 rounded-3xl border border-primary/20 bg-primary/[0.035] p-4 shadow-sm sm:grid-cols-2 sm:p-5" aria-label="Identificação rápida do recebimento">
+            <div className="sm:col-span-2">
+              <p className="text-sm font-bold">Identifique antes de fotografar</p>
+              <p className="mt-1 text-xs text-muted-foreground">No celular, os campos de seleção ficam primeiro para agilizar a bipagem.</p>
+            </div>
+            <Field label="Local de recebimento" htmlFor="receipt-location">
+              <NativeSelect id="receipt-location" className="h-12 w-full bg-card" value={fields.receivedLocation} onChange={(event) => updateField('receivedLocation', event.target.value)}>
+                <NativeSelectOption value="">Selecione o local</NativeSelectOption>
+                {options.locations.map((location) => <NativeSelectOption key={location.code} value={location.label}>{location.label}</NativeSelectOption>)}
+              </NativeSelect>
+            </Field>
+            <Field label="Loja / canal" htmlFor="receipt-store" hint="Opcional">
+              <Select value={fields.store} onValueChange={(value) => updateField('store', value || '')}>
+                <SelectTrigger id="receipt-store" className="h-12 w-full rounded-xl bg-card"><span className="flex min-w-0 flex-1 items-center gap-2 text-left">{fields.store ? <><span className="size-3 shrink-0 rounded-full ring-4 ring-background" style={statusDotStyle(options.stores.find((store) => store.label === fields.store)?.color || '#64748b')} /><span className="truncate font-medium">{fields.store}</span></> : <span className="text-muted-foreground">Selecionar loja</span>}</span></SelectTrigger>
+                <SelectContent>{options.stores.map((store) => <SelectItem key={store.code} value={store.label}><span className="size-3 rounded-full ring-2 ring-background" style={statusDotStyle(store.color)} />{store.label}</SelectItem>)}</SelectContent>
+              </Select>
+            </Field>
+          </section>
+
           <section className="grid gap-3 sm:grid-cols-2" aria-label="Adicionar fotos">
             <ContinuousCamera
               disabled={photos.length >= 8 || submitting || Boolean(preparingPhotos)}
@@ -428,26 +449,14 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
             <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-4 py-3 font-semibold outline-none focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50">
               <span className="grid size-9 place-items-center rounded-xl bg-primary/10 text-primary"><MapPin className="size-4" /></span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm">Adicionar dados agora</span>
-                <span className="block truncate text-xs font-normal text-muted-foreground">Local e data já estão preenchidos</span>
+                <span className="block text-sm">Dados rápidos do recebimento</span>
+                <span className="block truncate text-xs font-normal text-muted-foreground">Selecione primeiro o local e a loja</span>
               </span>
               <ChevronDown className="size-4 text-muted-foreground transition group-open:rotate-180" />
             </summary>
             <div className="grid gap-4 border-t px-4 py-5 sm:grid-cols-2">
-              <Field label="Local de recebimento" htmlFor="receipt-location">
-                <NativeSelect id="receipt-location" className="w-full" value={fields.receivedLocation} onChange={(event) => updateField('receivedLocation', event.target.value)}>
-                  <NativeSelectOption value="">Selecione o local</NativeSelectOption>
-                  {options.locations.map((location) => <NativeSelectOption key={location.code} value={location.label}>{location.label}</NativeSelectOption>)}
-                </NativeSelect>
-              </Field>
               <Field label="Data e hora recebida" htmlFor="receipt-date">
                 <Input id="receipt-date" className="h-11" type="datetime-local" value={fields.receivedAt} onChange={(event) => updateField('receivedAt', event.target.value)} />
-              </Field>
-              <Field label="Loja / canal" htmlFor="receipt-store" hint="Opcional">
-                <NativeSelect id="receipt-store" className="w-full" value={fields.store} onChange={(event) => updateField('store', event.target.value)}>
-                  <NativeSelectOption value="">Selecionar depois</NativeSelectOption>
-                  {options.stores.map((store) => <NativeSelectOption key={store.code} value={store.label}>{store.label}</NativeSelectOption>)}
-                </NativeSelect>
               </Field>
               <Field label="ID do pedido" htmlFor="receipt-order" hint="Opcional">
                 <Input id="receipt-order" className="h-11" placeholder="Ex.: 200000123456" value={fields.orderId} onChange={(event) => updateField('orderId', event.target.value)} />

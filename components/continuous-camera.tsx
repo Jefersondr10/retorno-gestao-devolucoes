@@ -95,6 +95,14 @@ export function ContinuousCamera({
         nextStream.getTracks().forEach((track) => track.stop());
         return;
       }
+      const videoTrack = nextStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.contentHint = 'detail';
+        const capabilities = videoTrack.getCapabilities?.() as MediaTrackCapabilities & { focusMode?: string[] };
+        if (capabilities?.focusMode?.includes('continuous')) {
+          await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet] }).catch(() => undefined);
+        }
+      }
       setStream(nextStream);
     } catch (cameraError) {
       setError(humanCameraError(cameraError));

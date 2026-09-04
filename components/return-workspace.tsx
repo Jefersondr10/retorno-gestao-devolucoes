@@ -104,6 +104,7 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
   const [serverError, setServerError] = useState('');
   const [notice, setNotice] = useState('');
   const [finalizing, setFinalizing] = useState(false);
+  const [selectedPanel, setSelectedPanel] = useState<WorkflowStep | 'history'>('receipt');
 
   const form = useForm<UpdateInput, unknown, UpdateOutput>({
     resolver: zodResolver(updateReturnSchema),
@@ -302,43 +303,43 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
           {!embedded && <UserMenu user={currentUser} />}
         </div>
         <nav className="mx-auto grid max-w-7xl grid-cols-2 gap-2 border-t px-4 py-2 text-xs font-semibold text-muted-foreground sm:grid-cols-3 sm:px-6 lg:grid-cols-5" aria-label="Progresso das etapas da devolução">
-          <Anchor href="#recebimento" number="1" label="Recebimento" state={stepStates.receipt} issueCount={issueCountByStep.receipt} />
-          <Anchor href="#pacote" number="2" label="Pacote e pedido" state={stepStates.package} issueCount={issueCountByStep.package} />
-          <Anchor href="#produtos" number="3" label="Produtos e condições" state={stepStates.products} issueCount={issueCountByStep.products} />
-          <Anchor href="#finalizacao" number="4" label="Entrada e finalização" state={stepStates.entry} issueCount={issueCountByStep.entry} />
-          <Anchor href="#historico" label="Histórico" />
+          <Anchor number="1" label="Recebimento" state={stepStates.receipt} issueCount={issueCountByStep.receipt} selected={selectedPanel === 'receipt'} onClick={() => setSelectedPanel('receipt')} />
+          <Anchor number="2" label="Pacote e pedido" state={stepStates.package} issueCount={issueCountByStep.package} selected={selectedPanel === 'package'} onClick={() => setSelectedPanel('package')} />
+          <Anchor number="3" label="Produtos e condições" state={stepStates.products} issueCount={issueCountByStep.products} selected={selectedPanel === 'products'} onClick={() => setSelectedPanel('products')} />
+          <Anchor number="4" label="Entrada e finalização" state={stepStates.entry} issueCount={issueCountByStep.entry} selected={selectedPanel === 'entry'} onClick={() => setSelectedPanel('entry')} />
+          <Anchor label="Histórico" selected={selectedPanel === 'history'} onClick={() => setSelectedPanel('history')} />
         </nav>
       </header>
 
-      <main className={cn('mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)] lg:items-start lg:py-8', embedded && 'min-h-0 flex-1 overflow-y-auto')}>
-        <aside className={cn('min-w-0 lg:sticky', embedded ? 'lg:top-3' : 'lg:top-32')}>
+      <main className={cn('mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)] lg:items-start lg:py-8', embedded && 'min-h-0 flex-1 overflow-hidden')}>
+        <aside className={cn('min-w-0 lg:sticky', embedded ? 'max-h-full overflow-y-auto lg:top-3' : 'lg:top-32')}>
           {detail.photos.length || detail.videos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80"><ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} videos={detail.videos} returnId={detail.id} finalized={finalized} canDeleteVideos={canDelete} onVideosDeleted={refreshAfterVideoDeletion} /></Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto ou vídeo recebido</p></div></Card>}
         </aside>
 
-        <div className="min-w-0 space-y-5">
+        <div className={cn('min-w-0 space-y-5', embedded && 'max-h-full overflow-y-auto pr-1')}>
           {!finalized && !canEdit && <Alert className="border-sky-200 bg-sky-50 text-sky-900"><CircleDashed /><AlertTitle>Modo de consulta</AlertTitle><AlertDescription>Você pode visualizar esta devolução, mas não possui acesso para editar os dados.</AlertDescription></Alert>}
           <fieldset disabled={finalized || !canEdit} className="space-y-5">
-            <SectionCard id="recebimento" step="1" icon={<MapPin />} title="Recebimento" description="Onde, de qual loja e quando a devolução chegou." state={stepStates.receipt} issueCount={issueCountByStep.receipt}>
+            {selectedPanel === 'receipt' && <SectionCard id="recebimento" step="1" icon={<MapPin />} title="Recebimento" description="Onde, de qual loja e quando a devolução chegou." state={stepStates.receipt} issueCount={issueCountByStep.receipt}>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Local de recebimento" error={form.formState.errors.receivedLocation?.message}>
                   <NativeSelect className="w-full" {...form.register('receivedLocation')}><NativeSelectOption value="">Selecione</NativeSelectOption>{locationOptions.map((location) => <NativeSelectOption key={location.code} value={location.label}>{location.label}</NativeSelectOption>)}</NativeSelect>
                 </Field>
                 <Field label="Loja de origem" error={form.formState.errors.store?.message}>
-                  <NativeSelect className="w-full" {...form.register('store')}><NativeSelectOption value="">Selecione</NativeSelectOption>{storeOptions.map((store) => <NativeSelectOption key={store.code} value={store.label}>{store.label}</NativeSelectOption>)}</NativeSelect>
+                  <StoreSelect value={values.store || ''} stores={storeOptions} onChange={(store) => form.setValue('store', store, { shouldDirty: true, shouldValidate: true })} />
                 </Field>
                 <Field label="Data e hora recebida" error={form.formState.errors.receivedAt?.message}><Input className="h-11" type="datetime-local" {...form.register('receivedAt')} /></Field>
               </div>
-            </SectionCard>
+            </SectionCard>}
 
-            <SectionCard id="pacote" step="2" icon={<Truck />} title="Pacote e pedido" description="Identificação do pacote recebido e observações gerais." state={stepStates.package} issueCount={issueCountByStep.package}>
+            {selectedPanel === 'package' && <SectionCard id="pacote" step="2" icon={<Truck />} title="Pacote e pedido" description="Identificação do pacote recebido e observações gerais." state={stepStates.package} issueCount={issueCountByStep.package}>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="ID do pedido"><Input className="h-11" placeholder="Número do pedido" {...form.register('orderId')} /></Field>
                 <Field label="Código de rastreio"><Input className="h-11 uppercase" placeholder="Código da transportadora" {...form.register('trackingCode')} /></Field>
                 <div className="sm:col-span-2"><Field label="Observações do pacote"><Textarea rows={3} placeholder="Estado da embalagem, etiqueta, lacre ou alguma informação importante..." {...form.register('notes')} /></Field></div>
               </div>
-            </SectionCard>
+            </SectionCard>}
 
-            <SectionCard id="produtos" step="3" icon={<PackagePlus />} title="Produtos e condições" description="Classifique cada produto e defina o que deve ser feito." state={stepStates.products} issueCount={issueCountByStep.products}>
+            {selectedPanel === 'products' && <SectionCard id="produtos" step="3" icon={<PackagePlus />} title="Produtos e condições" description="Classifique cada produto e defina o que deve ser feito." state={stepStates.products} issueCount={issueCountByStep.products}>
               <div className="mb-4 flex justify-end"><Button type="button" variant="outline" className="h-10" onClick={() => itemFields.append({ product: '', sku: '', quantity: 1, condition: '', conditionNotes: '', destination: '', testResult: '', notes: '' })}><PackagePlus /> Adicionar produto</Button></div>
               {itemFields.fields.length === 0 ? (
                 <div className="rounded-2xl border border-dashed bg-muted/20 p-7 text-center"><Box className="mx-auto size-6 text-muted-foreground" /><p className="mt-2 text-sm font-semibold">Nenhum produto informado</p><p className="mt-1 text-xs text-muted-foreground">Adicione os produtos para iniciar a classificação.</p></div>
@@ -369,9 +370,9 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
                   })}
                 </div>
               )}
-            </SectionCard>
+            </SectionCard>}
 
-            <SectionCard id="finalizacao" step="4" icon={<FileCheck2 />} title="Entrada e finalização" description="Defina o status e conclua somente quando as regras estiverem atendidas." state={stepStates.entry} issueCount={issueCountByStep.entry}>
+            {selectedPanel === 'entry' && <SectionCard id="finalizacao" step="4" icon={<FileCheck2 />} title="Entrada e finalização" description="Defina o status e conclua somente quando as regras estiverem atendidas." state={stepStates.entry} issueCount={issueCountByStep.entry}>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Status operacional" htmlFor="return-status">
                   <StatusSelect value={values.status || ''} statuses={statuses.filter((status) => (status.code !== 'FINALIZED' || finalized) && (Boolean(status.active) || status.code === detail.status))} onChange={(status) => form.setValue('status', status, { shouldDirty: true, shouldValidate: true })} />
@@ -383,18 +384,18 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
               {!finalized && blockingReasons.length > 0 && (
                 <Alert className="mt-5 border-amber-200 bg-amber-50 text-amber-900"><AlertCircle /><AlertTitle>Falta concluir {blockingReasons.length === 1 ? '1 item' : `${blockingReasons.length} itens`}</AlertTitle><AlertDescription><ul className="mt-1 list-disc space-y-1 pl-4">{blockingReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></AlertDescription></Alert>
               )}
-            </SectionCard>
+            </SectionCard>}
           </fieldset>
 
           {finalized && <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900"><CheckCircle2 /><AlertTitle>Devolução finalizada</AlertTitle><AlertDescription>Finalizada por {detail.finalized_by} em {formatDate(detail.finalized_at)}. O registro está protegido contra edições.</AlertDescription></Alert>}
 
-          {!finalized && (canEdit || canFinalize) && (
+          {selectedPanel === 'entry' && !finalized && (canEdit || canFinalize) && (
             <Card className="border-0 bg-card p-4 shadow-[0_12px_38px_rgb(28_39_36/7%)] ring-border/80 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted-foreground">{form.formState.isDirty ? 'Há alterações ainda não salvas.' : blockingReasons.length ? `${canEdit ? 'Salve os dados e ' : ''}conclua as pendências indicadas.` : canFinalize ? 'Tudo pronto para finalizar.' : 'Dados atualizados.'}</p><div className="flex flex-col gap-2 sm:flex-row">{canEdit && <Button type="submit" variant="outline" className="h-11" disabled={form.formState.isSubmitting || finalizing}>{form.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <Save />} Salvar alterações</Button>}{canFinalize && <Button type="button" className="h-11" disabled={blockingReasons.length > 0 || form.formState.isDirty || finalizing} onClick={finalize}>{finalizing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Finalizar devolução</Button>}</div></div>
             </Card>
           )}
 
-          <SectionCard id="historico" icon={<History />} title="Histórico" description="Registro das principais alterações desta devolução.">
+          {selectedPanel === 'history' && <SectionCard id="historico" icon={<History />} title="Histórico" description="Registro das principais alterações desta devolução.">
             <div className="space-y-3">
               {detail.history.map((event) => (
                 <div key={event.id} className="flex gap-3 rounded-2xl border bg-muted/15 p-3 text-sm sm:p-4">
@@ -407,7 +408,7 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
                 </div>
               ))}
             </div>
-          </SectionCard>
+          </SectionCard>}
 
           {serverError && <Alert variant="destructive"><AlertCircle /><AlertTitle>Não foi possível concluir</AlertTitle><AlertDescription>{serverError}</AlertDescription></Alert>}
         </div>
@@ -424,6 +425,18 @@ function StatusSelect({ value, statuses, onChange }: { value: string; statuses: 
       <SelectTrigger id="return-status" className="h-11 w-full rounded-xl"><span className="flex min-w-0 flex-1 items-center gap-2 text-left">{selected ? <><span className="size-2.5 shrink-0 rounded-full" style={statusDotStyle(selected.color)} /><span className="truncate">{selected.label}</span></> : <span className="text-muted-foreground">Status não configurado</span>}</span></SelectTrigger>
       <SelectContent>
         {statuses.map((status) => <SelectItem key={status.code} value={status.code}><span className="size-2.5 rounded-full" style={statusDotStyle(status.color)} />{status.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function StoreSelect({ value, stores, onChange }: { value: string; stores: ConfigOption[]; onChange: (value: string) => void }) {
+  const selected = stores.find((store) => store.label === value);
+  return (
+    <Select value={value} onValueChange={(next) => onChange(next || '')}>
+      <SelectTrigger className="h-11 w-full rounded-xl"><span className="flex min-w-0 flex-1 items-center gap-2 text-left">{selected ? <><span className="size-3 shrink-0 rounded-full ring-4 ring-background" style={statusDotStyle(selected.color)} /><span className="truncate font-medium">{selected.label}</span></> : <span className="text-muted-foreground">Selecione a loja</span>}</span></SelectTrigger>
+      <SelectContent>
+        {stores.map((store) => <SelectItem key={store.code} value={store.label}><span className="size-3 rounded-full ring-2 ring-background" style={statusDotStyle(store.color)} />{store.label}</SelectItem>)}
       </SelectContent>
     </Select>
   );
@@ -469,12 +482,13 @@ function Field({ label, htmlFor, hint, error, children }: { label: string; htmlF
   return <div className="space-y-2"><div className="flex items-center justify-between gap-2"><Label htmlFor={htmlFor}>{label}</Label>{hint && <span className="text-[11px] font-medium text-muted-foreground">{hint}</span>}</div>{children}{error && <p className="text-xs text-destructive">{error}</p>}</div>;
 }
 
-function Anchor({ href, number, label, state, issueCount = 0 }: { href: string; number?: string; label: string; state?: StepState; issueCount?: number }) {
+function Anchor({ number, label, state, issueCount = 0, selected, onClick }: { number?: string; label: string; state?: StepState; issueCount?: number; selected: boolean; onClick: () => void }) {
   const presentation = state ? stepPresentation(state) : null;
   return (
-    <a
-      href={href}
-      aria-current={state === 'current' || state === 'ready' ? 'step' : undefined}
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={selected ? 'step' : undefined}
       className={cn(
         'min-w-0 rounded-xl border px-3 py-2 outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50',
         state === 'complete' && 'border-emerald-200 bg-emerald-50 text-emerald-800',
@@ -482,6 +496,7 @@ function Anchor({ href, number, label, state, issueCount = 0 }: { href: string; 
         state === 'pending' && 'border-border bg-card text-muted-foreground',
         state === 'ready' && 'border-emerald-300 bg-emerald-100 text-emerald-900',
         !state && 'border-transparent bg-muted/40',
+        selected && 'ring-2 ring-primary/35',
       )}
     >
       <span className="flex min-w-0 items-center gap-2">
@@ -489,7 +504,7 @@ function Anchor({ href, number, label, state, issueCount = 0 }: { href: string; 
         <span className="truncate">{number ? `${number}. ${label}` : label}</span>
       </span>
       {presentation && <span className="mt-1 block truncate text-[10px] font-medium opacity-80">{presentation.label} · {pendingCountLabel(issueCount)}</span>}
-    </a>
+    </button>
   );
 }
 

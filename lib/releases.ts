@@ -18,6 +18,36 @@ export type SystemRelease = {
  */
 export const SYSTEM_RELEASES: readonly SystemRelease[] = [
   {
+    id: '2026-09-03-fluxo-rapido-e-tela-cheia',
+    version: '14',
+    title: 'Fluxo mais rápido no celular e no computador',
+    publishedAt: '2026-09-03',
+    summary:
+      'A gestão de devoluções ficou mais direta, com tela cheia, etapas por clique e identificação rápida no celular.',
+    changes: [
+      {
+        title: 'Gestão em tela cheia e por etapas',
+        description:
+          'Ao abrir uma devolução, apenas a etapa escolhida aparece. As etapas concluídas ficam destacadas e a navegação não desloca mais a página.',
+      },
+      {
+        title: 'Loja e local primeiro no celular',
+        description:
+          'Os campos de seleção aparecem antes da câmera, e cada loja mantém a cor cadastrada para facilitar a identificação.',
+      },
+      {
+        title: 'Busca sem apagar a tela',
+        description:
+          'A lista permanece visível enquanto os resultados são atualizados, reduzindo a sensação de recarregamento constante.',
+      },
+      {
+        title: 'Câmera com foco contínuo',
+        description:
+          'Quando o aparelho permite, a câmera interna prioriza detalhes e mantém o foco contínuo durante a captura.',
+      },
+    ],
+  },
+  {
     id: '2026-09-03-aplicativo-e-regras-de-condicao',
     version: '13',
     title: 'Aplicativo, novidades e regras mais flexíveis',
