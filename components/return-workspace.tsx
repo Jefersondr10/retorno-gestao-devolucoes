@@ -106,6 +106,7 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
   const [notice, setNotice] = useState('');
   const [finalizing, setFinalizing] = useState(false);
   const [selectedPanel, setSelectedPanel] = useState<WorkflowStep | 'history'>('receipt');
+  const [mediaExpanded, setMediaExpanded] = useState(false);
 
   const form = useForm<UpdateInput, unknown, UpdateOutput>({
     resolver: zodResolver(updateReturnSchema),
@@ -175,35 +176,45 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([
-      apiFetch(`/api/returns/${returnId}`).then(async (response) => {
-        const result = (await response.json()) as { item?: ReturnDetail; error?: string };
-        if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível abrir a devolução.');
-        return result.item;
-      }),
-      apiFetch('/api/config/statuses?includeInactive=true').then(async (response) => {
+    setMediaExpanded(false);
+    const detailRequest = apiFetch(`/api/returns/${returnId}`).then(async (response) => {
+      const result = (await response.json()) as { item?: ReturnDetail; error?: string };
+      if (!response.ok || !result.item) throw new Error(result.error || 'Não foi possível abrir a devolução.');
+      return result.item;
+    });
+    const statusesRequest = apiFetch('/api/config/statuses?includeInactive=true').then(async (response) => {
         const result = (await response.json()) as { items?: StatusDefinition[]; error?: string };
         if (!response.ok) throw new Error(result.error || 'Não foi possível carregar os status.');
         return result.items || [];
-      }),
-      apiFetch('/api/config/options').then(async (response) => {
+      });
+    const optionsRequest = apiFetch('/api/config/options').then(async (response) => {
         const result = (await response.json()) as ConfigOptionsResponse & { error?: string };
         if (!response.ok) throw new Error(result.error || 'Não foi possível carregar os cadastros.');
         return result;
-      }),
-    ])
-      .then(([loadedDetail, loadedStatuses, loadedOptions]) => {
+      });
+    const configurationRequest = Promise.all([statusesRequest, optionsRequest]);
+
+    detailRequest.then((loadedDetail) => {
+      if (cancelled) return;
+      setDetail(loadedDetail);
+      form.reset(mapDetail(loadedDetail));
+      setLoading(false);
+      void configurationRequest.then(([loadedStatuses, loadedOptions]) => {
         if (cancelled) return;
-        setDetail(loadedDetail);
         setStatuses(loadedStatuses);
         setOptions({
           ...loadedOptions,
           conditions: mergeConditionDefinitions(loadedOptions.conditions, loadedDetail.condition_definitions),
         });
-        form.reset(mapDetail(loadedDetail));
-      })
-      .catch((error) => !cancelled && setServerError(error instanceof Error ? error.message : 'Não foi possível abrir a devolução.'))
-      .finally(() => !cancelled && setLoading(false));
+      }).catch(() => {
+        if (!cancelled) setServerError('Os dados foram abertos, mas alguns menus ainda não puderam ser carregados. Tente novamente em instantes.');
+      });
+    }).catch((error) => {
+      if (!cancelled) {
+        setServerError(error instanceof Error ? error.message : 'Não foi possível abrir a devolução.');
+        setLoading(false);
+      }
+    });
     return () => { cancelled = true; };
   }, [form, returnId]);
 
@@ -314,7 +325,14 @@ export function ReturnWorkspace({ returnId, currentUser, embedded = false, onClo
 
       <main className={cn('mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)] lg:items-start lg:py-8', embedded && 'min-h-0 flex-1 overflow-hidden')}>
         <aside className={cn('min-w-0 lg:sticky', embedded ? 'max-h-full overflow-y-auto lg:top-3' : 'lg:top-32')}>
-          {detail.photos.length || detail.videos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80"><ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} videos={detail.videos} returnId={detail.id} finalized={finalized} canDeleteVideos={canDelete} onVideosDeleted={refreshAfterVideoDeletion} /></Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto ou vídeo recebido</p></div></Card>}
+          {detail.photos.length || detail.videos.length ? <Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_14px_45px_rgb(28_39_36/8%)] ring-border/80">
+            {mediaExpanded ? <ReturnPhotoGallery protocol={detail.protocol} photos={detail.photos} videos={detail.videos} returnId={detail.id} finalized={finalized} canDeleteVideos={canDelete} onVideosDeleted={refreshAfterVideoDeletion} /> : <div className="flex min-h-44 flex-col items-center justify-center px-5 py-6 text-center">
+              <span className="grid size-12 place-items-center rounded-2xl bg-primary/10 text-primary"><Camera className="size-6" /></span>
+              <p className="mt-3 text-sm font-bold">{detail.photos.length} {detail.photos.length === 1 ? 'foto' : 'fotos'} · {detail.videos.length} {detail.videos.length === 1 ? 'vídeo' : 'vídeos'}</p>
+              <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">Os arquivos ficam em espera para esta tela abrir mais rápido.</p>
+              <Button type="button" variant="outline" className="mt-4 h-11 rounded-xl" onClick={() => setMediaExpanded(true)}><Camera /> Carregar fotos e vídeos</Button>
+            </div>}
+          </Card> : <Card className="grid min-h-60 place-items-center border-dashed bg-card/60 text-center"><div><Camera className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-bold">Nenhuma foto ou vídeo recebido</p></div></Card>}
         </aside>
 
         <div className={cn('min-w-0 space-y-5', embedded && 'max-h-full overflow-y-auto pr-1')}>

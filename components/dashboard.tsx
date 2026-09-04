@@ -44,7 +44,7 @@ import { statusClass, statusDotStyle, statusStyle } from '@/lib/status-colors';
 export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
   const canCreateReturns = hasUserPermission(currentUser, 'returns.create');
   const canDeleteReturns = hasUserPermission(currentUser, 'returns.delete');
-  const mobileNavColumns = canCreateReturns ? 'grid-cols-4' : 'grid-cols-3';
+  const mobileNavColumns = canCreateReturns ? 'grid-cols-5' : 'grid-cols-4';
   const [items, setItems] = useState<ReturnSummary[]>([]);
   const [statuses, setStatuses] = useState<StatusDefinition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,20 +53,21 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [storeFilters, setStoreFilters] = useState<string[]>([]);
   const [configuredStores, setConfiguredStores] = useState<ConfigOption[]>([]);
-  const [viewMode, setViewMode] = useState<'pending' | 'finalized'>('pending');
+  const [viewMode, setViewMode] = useState<'all' | 'pending' | 'finalized'>('pending');
   const [listLayout, setListLayout] = useState<'grid' | 'list'>('grid');
   const [groupByStore, setGroupByStore] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState('');
   const [notice, setNotice] = useState('');
 
-  const loadReturns = useCallback(async (query = search, nextView = viewMode) => {
+  const loadReturns = useCallback(async (query = search, nextView: 'all' | 'pending' | 'finalized' = viewMode) => {
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams();
       if (query.trim()) params.set('q', query.trim());
       if (nextView === 'finalized') params.set('status', 'FINALIZED');
+      if (nextView === 'all') params.set('includeFinalized', 'true');
       const response = await apiFetch(`/api/returns?${params}`);
       const result = (await response.json()) as { items?: ReturnSummary[]; error?: string };
       if (!response.ok) throw new Error(result.error || 'Não foi possível carregar as devoluções.');
@@ -142,7 +143,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
     ready: items.filter((item) => item.status === 'READY').length,
   }), [items]);
 
-  function changeView(nextView: 'pending' | 'finalized') {
+  function changeView(nextView: 'all' | 'pending' | 'finalized') {
     setViewMode(nextView);
     setStatusFilters([]);
     setStoreFilters([]);
@@ -206,17 +207,18 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
           </div>
         </div>
         <nav aria-label="Navegação principal" className="mx-auto hidden max-w-7xl items-center gap-2 border-t border-border/60 px-4 py-2 sm:px-6 lg:flex">
+          <HeaderNav active={viewMode === 'all'} icon={<Inbox />} label="Todas" onClick={() => changeView('all')} />
           <HeaderNav active={viewMode === 'pending'} icon={<LayoutDashboard />} label="Pendências" onClick={() => changeView('pending')} />
           <HeaderNav active={viewMode === 'finalized'} icon={<Archive />} label="Finalizadas" onClick={() => changeView('finalized')} />
           <HeaderNav active={groupByStore} icon={<Store />} label={groupByStore ? 'Separado por loja' : 'Separar por loja'} onClick={toggleStoreGrouping} />
-          <p className="ml-auto text-xs text-muted-foreground">{viewMode === 'finalized' ? 'Histórico concluído e limpeza de armazenamento' : 'Fila operacional em andamento'}</p>
+          <p className="ml-auto text-xs text-muted-foreground">{viewMode === 'all' ? 'Visão completa de todas as devoluções' : viewMode === 'finalized' ? 'Histórico concluído e limpeza de armazenamento' : 'Fila operacional em andamento'}</p>
         </nav>
       </header>
 
       <main className="mx-auto min-w-0 max-w-7xl px-4 pb-28 pt-6 sm:px-6 lg:pb-10 lg:pt-8">
           <div className="mx-auto">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div><p className="text-sm font-semibold text-primary">{viewMode === 'finalized' ? 'Arquivo concluído' : todayLabel()}</p><h1 className="display-title mt-1 text-2xl sm:text-[30px]">{viewMode === 'finalized' ? 'Devoluções finalizadas' : 'Fila de devoluções'}</h1><p className="mt-1.5 text-sm leading-6 text-muted-foreground">{viewMode === 'finalized' ? 'Consulte registros concluídos ou exclua manualmente o que não precisa mais ser guardado.' : 'Comece pelas devoluções que precisam de ação.'}</p></div>
+              <div><p className="text-sm font-semibold text-primary">{viewMode === 'all' ? 'Visão geral' : viewMode === 'finalized' ? 'Arquivo concluído' : todayLabel()}</p><h1 className="display-title mt-1 text-2xl sm:text-[30px]">{viewMode === 'all' ? 'Todas as devoluções' : viewMode === 'finalized' ? 'Devoluções finalizadas' : 'Fila de devoluções'}</h1><p className="mt-1.5 text-sm leading-6 text-muted-foreground">{viewMode === 'all' ? 'Consulte juntas as devoluções em andamento e as já finalizadas.' : viewMode === 'finalized' ? 'Consulte registros concluídos ou exclua manualmente o que não precisa mais ser guardado.' : 'Comece pelas devoluções que precisam de ação.'}</p></div>
               <div className="relative md:hidden"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} className="h-11 rounded-xl bg-card pl-9" placeholder="Buscar devolução" aria-label="Buscar devolução" /></div>
             </div>
 
@@ -228,9 +230,9 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
             </section>}
 
             <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-start">
-              {viewMode === 'pending' && statuses.length > 0 && (
+              {viewMode !== 'finalized' && statuses.length > 0 && (
                 <StatusMultiSelect
-                  statuses={statuses.filter((status) => status.code !== 'FINALIZED' && (Boolean(status.active) || Number(status.usage_count || 0) > 0))}
+                  statuses={statuses.filter((status) => (viewMode === 'all' || status.code !== 'FINALIZED') && (Boolean(status.active) || Number(status.usage_count || 0) > 0))}
                   selected={statusFilters}
                   onChange={setStatusFilters}
                 />
@@ -240,7 +242,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
 
             {(statusFilters.length > 0 || storeFilters.length > 0) && (
               <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="Filtros selecionados">
-                {viewMode === 'pending' && statuses.filter((status) => statusFilters.includes(status.code)).map((status) => (
+                {viewMode !== 'finalized' && statuses.filter((status) => statusFilters.includes(status.code)).map((status) => (
                   <button
                     key={status.code}
                     type="button"
@@ -309,6 +311,7 @@ export function Dashboard({ currentUser }: { currentUser: AuthUser }) {
       </main>
 
       <nav aria-label="Navegação móvel" className={`fixed inset-x-3 bottom-3 z-40 grid ${mobileNavColumns} rounded-2xl border border-border/80 bg-card/95 px-1 py-2 shadow-[var(--shadow-floating)] backdrop-blur-xl lg:hidden`}>
+        <MobileNav icon={<Inbox />} label="Todas" active={viewMode === 'all'} onClick={() => changeView('all')} />
         <MobileNav icon={<LayoutDashboard />} label="Pendentes" active={viewMode === 'pending'} onClick={() => changeView('pending')} />
         <MobileNav icon={<Archive />} label="Finalizadas" active={viewMode === 'finalized'} onClick={() => changeView('finalized')} />
         {canCreateReturns && <MobileNav icon={<Camera />} label="Nova" onClick={() => { window.location.href = '/receber'; }} />}

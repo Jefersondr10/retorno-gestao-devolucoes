@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 
 import { ContinuousCamera } from '@/components/continuous-camera';
+import { ContinuousVideoRecorder } from '@/components/continuous-video-recorder';
 import { PhotoLightbox } from '@/components/photo-lightbox';
 import { TinyProductInput } from '@/components/tiny-product-input';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -178,6 +179,10 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
   async function addVideo(fileList: FileList | null) {
     const file = fileList?.[0];
     if (!file) return;
+    await prepareSelectedVideo(file);
+  }
+
+  async function prepareSelectedVideo(file: File) {
     setPreparingVideo(true);
     setError('');
     try {
@@ -443,7 +448,7 @@ export function MobileReceiptPage({ currentUser }: { currentUser: AuthUser }) {
               </div>
             ) : (
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                <Button type="button" variant="outline" className="h-12 rounded-xl" disabled={submitting || preparingVideo} onClick={() => videoCameraInput.current?.click()}>{preparingVideo ? <Loader2 className="animate-spin" /> : <Video />} Gravar vídeo</Button>
+                <ContinuousVideoRecorder disabled={submitting || preparingVideo} onCapture={(file) => void prepareSelectedVideo(file)} onNativeFallback={() => videoCameraInput.current?.click()} />
                 <Button type="button" variant="outline" className="h-12 rounded-xl" disabled={submitting || preparingVideo} onClick={() => videoGalleryInput.current?.click()}><Upload /> Escolher vídeo</Button>
               </div>
             )}

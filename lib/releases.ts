@@ -18,6 +18,18 @@ export type SystemRelease = {
  */
 export const SYSTEM_RELEASES: readonly SystemRelease[] = [
   {
+    id: '2026-09-03-visao-completa-e-midia-rapida',
+    version: '18',
+    title: 'Visão completa e mídia mais rápida',
+    publishedAt: '2026-09-03',
+    summary: 'Agora é possível consultar todas as devoluções e abrir a gestão sem esperar o carregamento dos arquivos pesados.',
+    changes: [
+      { title: 'Filtro Todas', description: 'A nova opção reúne devoluções pendentes e finalizadas e funciona com os demais filtros e com a separação por loja.' },
+      { title: 'Abertura mais rápida', description: 'Fotos e vídeos são carregados somente quando você pedir, deixando os dados da devolução disponíveis primeiro.' },
+      { title: 'Vídeo com foco aprimorado', description: 'Em aparelhos compatíveis, o gravador usa a câmera traseira em alta definição e foco contínuo, mantendo a câmera nativa como alternativa.' },
+    ],
+  },
+  {
     id: '2026-09-03-agrupamento-por-loja',
     version: '17',
     title: 'Devoluções separadas por loja',

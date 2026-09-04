@@ -105,7 +105,7 @@ export function ReturnPhotoGallery({
           >
             {/* Private photos are streamed by an authenticated application route. */}
             {/* eslint-disable-next-line next/no-img-element */}
-            <img src={active.src} alt={active.alt} className="h-full w-full object-contain" />
+            <img src={active.src} alt={active.alt} decoding="async" className="h-full w-full object-contain" />
             <span className="absolute bottom-3 right-3 flex items-center gap-2 rounded-xl bg-black/65 px-3 py-2 text-xs font-semibold text-white shadow-lg transition group-hover:bg-black/80">
               <Expand className="size-4" /> Ampliar e dar zoom
             </span>
@@ -130,7 +130,7 @@ export function ReturnPhotoGallery({
                   aria-current={index === safeSelected ? 'true' : undefined}
                 >
                   {/* eslint-disable-next-line next/no-img-element */}
-                  <img src={photo.src} alt="" className="h-full w-full object-cover" />
+                  <img src={photo.src} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                   <span className="absolute bottom-1 right-1 grid size-5 place-items-center rounded-md bg-black/65 text-[10px] font-bold text-white">{index + 1}</span>
                 </button>
               ))}
@@ -153,7 +153,7 @@ export function ReturnPhotoGallery({
               <video
                 controls
                 playsInline
-                preload="metadata"
+                preload="none"
                 src={`/api/videos/${video.id}`}
                 className="aspect-video max-h-[420px] w-full bg-slate-950 object-contain"
                 aria-label={`Vídeo ${index + 1} de ${videos.length} da devolução ${protocol}`}
